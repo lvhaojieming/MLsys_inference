@@ -1,20 +1,13 @@
-# Ignore the contents of the _site directory and other cache directories
-_site/
-.sass-cache/
-
-# Ignore the directory for local files during development
-local/
-
-# Ignore the Gemfile that is generated
-Gemfile.lock
-
-# Ignore files created by npm
-node_modules
-package-lock.json
-
-# Ignore the vendor file and bundle for alternative installation
-vendor/
-.bundle/
-
-# Ignore folders related to IDEs
-.vscode/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.venv/
+build/
+dist/
+.env
+*.log
+/results/*
+!/results/.gitkeep
+/configs/local.json
+*.tgz

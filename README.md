@@ -1,96 +1,55 @@
-# Academic Pages
-**Academic Pages is a GitHub Pages template for personal and professional portfolio-oriented websites.**
+# MoQE Inference
 
-![Academic Pages template example](images/homepage.png "Academic Pages template example")
+异构量化专家 LLM 推理系统，后端通过 OpenAI-compatible 接口连接 vLLM / vllm-ascend。
+训练代码独立维护，本工程只负责在线服务及系统实验。
 
-# Getting Started
+## 当前实现
 
-1. Register a GitHub account if you don't have one and confirm your e-mail (required!)
-1. Click the "Use this template" button in the top right.
-1. On the "New repository" page, enter your public repository name as "[your GitHub username].github.io", which will also be your website's URL.
-1. Set site-wide configuration and add your content.
-1. Upload any files (like PDFs, .zip files, etc.) to the `files/` directory. They will appear at https://[your GitHub username].github.io/files/example.pdf.
-1. Check status by going to the repository settings, in the "GitHub pages" section
-1. (Optional) Use the Jupyter notebooks or python scripts in the `markdown_generator` folder to generate markdown files for publications and talks from a TSV file.
+- FastAPI Gateway，`/health`、`/v1/models`、`/v1/chat/completions`。
+- 静态专家池，按在途请求数选择副本。
+- 标准 JSON 与 SSE 流式代理，后端模型名称映射。
+- 后端失败返回 502，释放副本计数；请求携带 trace / expert / replica 响应头。
+- 配置校验；后端凭据通过 `api_key_env` 引用环境变量。
 
-See more info at https://academicpages.github.io/
+当前请求的 `model` 显式指定 `awq` 或 `gptq`，尚未接入训练好的 router。
+`/health` 只表示 Gateway 存活。副本计数属于单个 Gateway 进程。
+尚未实现自动健康摘除、动态卡池、重试、跨专家容错、容量策略和完整指标。
+流式响应开始后发生故障会中断，不会重新生成或拼接另一个专家的回答。
 
-## Running locally
-
-When you are initially working on your website, it is very useful to be able to preview the changes locally before pushing them to GitHub. To work locally you will need to:
-
-1. Clone the repository and made updates as detailed above.
-
-### Using a different IDE
-1. Make sure you have ruby-dev, bundler, and nodejs installed
-    
-    On most Linux distribution and [Windows Subsystem Linux](https://learn.microsoft.com/en-us/windows/wsl/about) the command is:
-    ```bash
-    sudo apt install ruby-dev ruby-bundler nodejs
-    ```
-    If you see error `Unable to locate package ruby-bundler`, `Unable to locate package nodejs `, run the following:
-    ```bash
-    sudo apt update && sudo apt upgrade -y
-    ```
-    then try run `sudo apt install ruby-dev ruby-bundler nodejs` again.
-
-    On MacOS the commands are:
-    ```bash
-    brew install ruby
-    brew install node
-    gem install bundler
-    ```
-1. Run `bundle install` to install ruby dependencies. If you get errors, delete Gemfile.lock and try again.
-
-    If you see file permission error like `Fetching bundler-2.6.3.gem ERROR:  While executing gem (Gem::FilePermissionError) You don't have write permissions for the /var/lib/gems/3.2.0 directory.` or `Bundler::PermissionError: There was an error while trying to write to /usr/local/bin.`
-    Install Gems Locally (Recommended):
-    ```bash
-    bundle config set --local path 'vendor/bundle'
-    ```
-    then try run `bundle install` again. If succeeded, you should see a folder called `vendor` and `.bundle`.
-
-1. Run `jekyll serve -l -H localhost` to generate the HTML and serve it from `localhost:4000` the local server will automatically rebuild and refresh the pages on change.
-    You may also try `bundle exec jekyll serve -l -H localhost` to ensure jekyll to use specific dependencies on your own local machine.
-
-If you are running on Linux it may be necessary to install some additional dependencies prior to being able to run locally: `sudo apt install build-essential gcc make`
-
-## Using Docker
-
-Working from a different OS, or just want to avoid installing dependencies? You can use the provided `Dockerfile` to build a container that will run the site for you if you have [Docker](https://www.docker.com/) installed.
-
-You can build and execute the container by running the following command in the repository:
+## 启动
 
 ```bash
-chmod -R 777 .
-docker compose up
+python -m pip install -e '.[test]'
+moqe-serve --config configs/dev.json --host 127.0.0.1 --port 8000
 ```
 
-You should now be able to access the website from `localhost:4000`.
+`dev.json` 不连接模型，仅供 Gateway 检查。
+复制 `configs/example.json` 为 `configs/local.json`，填入真实专家 endpoint 和后端模型名，
+再以该配置启动。示例端口不代表集群实际部署。
 
-### Using the DevContainer in VS Code
+```bash
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/v1/models
+curl http://127.0.0.1:8000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"awq","messages":[{"role":"user","content":"你好"}],"stream":false}'
+python -m pytest -q
+```
 
-If you are using [Visual Studio Code](https://code.visualstudio.com/) you can use the [Dev Container](https://code.visualstudio.com/docs/devcontainers/containers) that comes with this Repository. Normally VS Code detects that a development coontainer configuration is available and asks you if you want to use the container. If this doesn't happen you can manually start the container by **F1->DevContainer: Reopen in Container**. This restarts your VS Code in the container and automatically hosts your academic page locally on http://localhost:4000. All changes will be updated live to that page after a few seconds.
+## 目录与开发顺序
 
-# Maintenance
+| 目录 | 用途 |
+| --- | --- |
+| `src/moqe_serving/gateway` | HTTP 入口、请求生命周期 |
+| `src/moqe_serving/routing` | Router 推理契约，后续接入 checkpoint |
+| `src/moqe_serving/pool` | 专家池、副本调度，后续动态成员与健康管理 |
+| `src/moqe_serving/backends` | vLLM / Ascend 服务接口 |
+| `src/moqe_serving/observability` | 后续指标与完整 trace |
+| `src/moqe_serving/offline`、`placement` | 后续离线分析与部署规划 |
+| `benchmarks` | 质量、性能、扩缩容和故障实验 |
+| `configs/experiments` | 实验配置 |
+| `tests`、`docs`、`results` | 测试、技术报告、生成结果 |
 
-Bug reports and feature requests to the template should be [submitted via GitHub](https://github.com/academicpages/academicpages.github.io/issues/new/choose). For questions concerning how to style the template, please feel free to start a [new discussion on GitHub](https://github.com/academicpages/academicpages.github.io/discussions).
-
-This repository was forked (then detached) by [Stuart Geiger](https://github.com/staeiou) from the [Minimal Mistakes Jekyll Theme](https://mmistakes.github.io/minimal-mistakes/), which is © 2016 Michael Rose and released under the MIT License (see LICENSE.md). It is currently being maintained by [Robert Zupko](https://github.com/rjzupkoii) and additional maintainers would be welcomed.
-
-## Bugfixes and enhancements
-
-If you have bugfixes and enhancements that you would like to submit as a pull request, you will need to [fork](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/working-with-forks/fork-a-repo) this repository as opposed to using it as a template. This will also allow you to [synchronize your copy](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/working-with-forks/syncing-a-fork) of template to your fork as well.
-
-Unfortunately, one logistical issue with a template theme like Academic Pages that makes it a little tricky to get bug fixes and updates to the core theme. If you use this template and customize it, you will probably get merge conflicts if you attempt to synchronize. If you want to save your various .yml configuration files and markdown files, you can delete the repository and fork it again. Or you can manually patch.
-
----
-<div align="center">
-    
-![pages-build-deployment](https://github.com/academicpages/academicpages.github.io/actions/workflows/pages/pages-build-deployment/badge.svg)
-[![GitHub contributors](https://img.shields.io/github/contributors/academicpages/academicpages.github.io.svg)](https://github.com/academicpages/academicpages.github.io/graphs/contributors)
-[![GitHub release](https://img.shields.io/github/v/release/academicpages/academicpages.github.io)](https://github.com/academicpages/academicpages.github.io/releases/latest)
-[![GitHub license](https://img.shields.io/github/license/academicpages/academicpages.github.io?color=blue)](https://github.com/academicpages/academicpages.github.io/blob/master/LICENSE)
-
-[![GitHub stars](https://img.shields.io/github/stars/academicpages/academicpages.github.io)](https://github.com/academicpages/academicpages.github.io)
-[![GitHub forks](https://img.shields.io/github/forks/academicpages/academicpages.github.io)](https://github.com/academicpages/academicpages.github.io/fork)
-</div>
+四周计划：第 1 周端到端接入及 router；第 2 周两级路由和动态卡池；
+第 3 周容错与监控；第 4 周系统实验及结果整理。
+技术报告是设计参考，实际功能以代码和测试为准。
