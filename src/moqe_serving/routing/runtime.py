@@ -1,11 +1,16 @@
-from typing import Protocol, Sequence
+from dataclasses import dataclass
+from typing import Protocol
+
+
+@dataclass(frozen=True)
+class RoutingDecision:
+    expert: str
+    probabilities: dict[str, float]
+    input_tokens: int
+    elapsed_ms: float
 
 
 class RouterRuntime(Protocol):
-    """Future implementation consumes the complete tokenized prompt.
+    chat_template: str
 
-    Output expert scores must use the checkpoint's expert ordering.
-    Scores are not assumed to be calibrated regret estimates.
-    """
-
-    def score(self, input_ids: Sequence[int]) -> dict[str, float]: ...
+    def route(self, messages: list[dict], max_new_tokens: int, template_kwargs: dict) -> RoutingDecision: ...
