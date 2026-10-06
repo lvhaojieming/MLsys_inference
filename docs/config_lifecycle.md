@@ -26,6 +26,7 @@ python -m moqe_serving --config configs/awq_pool_cluster.json
 |---|---|
 | `gateway` | 监听地址、端口、日志级别 |
 | `nodes` | 节点 ID、地址、SSH 目标、ssh_options（端口、身份文件等）、容器名称 |
+| `runtime_profiles` / `replicas[].runtime_profile` | 昇腾后端环境和适配器的公共定义及副本引用 |
 | `replicas` | 目标副本列表；一个条目对应一个服务实例，可占多张卡 |
 | `enabled` | true 加入目标列表；false 退出；也可删除该条目 |
 | `nodes[].enabled` | 一次启用或停用整个节点及其下全部副本 |
@@ -73,7 +74,7 @@ python -m moqe_serving --config configs/awq_pool_cluster.json
 仅验收失败的副本可先设 false，等待 OFFLINE，再设 true 重试。
 
 建议编辑临时文件后原子替换配置。非法 JSON、重复设备、全新专家等配置错误在操作前被拒绝。
-节点和副本支持热修改；Gateway 端口、Router checkpoint、验收设置等全局参数在重启时读取，
+节点、副本和 runtime_profiles 支持热修改；Gateway 端口、Router checkpoint、验收设置等全局参数在重启时读取，
 修改这些字段后必须重启，当前版本会明确拒绝将其作为热更新执行。
 开启配置管理后，单副本注册、drain 和 validate API 禁用，配置文件是副本目标状态的唯一来源。
 

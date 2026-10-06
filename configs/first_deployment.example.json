@@ -1,5 +1,19 @@
 {
-  "gateway": {"host": "127.0.0.1", "port": 18083, "log_level": "info"},
+  "runtime_profiles": {
+    "ascend_vllm": {
+      "accelerator": "ascend",
+      "backend": "vllm",
+      "adapter": "native",
+      "environment_scripts": [
+        "/usr/local/Ascend/ascend-toolkit/set_env.sh"
+      ]
+    }
+  },
+  "gateway": {
+    "host": "127.0.0.1",
+    "port": 18083,
+    "log_level": "info"
+  },
   "watch_config": true,
   "config_poll_interval_seconds": 2,
   "drain_timeout_seconds": 300,
@@ -14,7 +28,13 @@
     "embedding_model": "/workspace/models/Qwen3-Embedding-0.6B",
     "device": "npu:0",
     "embedding_graph": true,
-    "graph_buckets": [64, 128, 256, 512, 1024],
+    "graph_buckets": [
+      64,
+      128,
+      256,
+      512,
+      1024
+    ],
     "graph_threshold_margin": 0.01,
     "expert_mapping": {
       "qwen3-14b/awq-w4a16/v1": "awq",
@@ -26,14 +46,16 @@
       "id": "awq-node",
       "host": "REPLACE_AWQ_NODE",
       "ssh_target": "root@REPLACE_AWQ_NODE",
-      "ssh_options": ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15"],
+      "ssh_options": [
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=15"
+      ],
       "container": "REPLACE_EXPERT_CONTAINER",
       "enabled": true,
       "prepare": {
         "python": "python3",
-        "required_modules": ["vllm", "torch_npu"],
-        "host_checks": [["npu-smi", "info"]],
-        "environment_scripts": ["/usr/local/Ascend/ascend-toolkit/set_env.sh"],
         "helper_path": "/workspace/moqe/manage_backend.py",
         "command_timeout_seconds": 120
       }
@@ -42,14 +64,16 @@
       "id": "gptq-node",
       "host": "REPLACE_GPTQ_NODE",
       "ssh_target": "root@REPLACE_GPTQ_NODE",
-      "ssh_options": ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15"],
+      "ssh_options": [
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=15"
+      ],
       "container": "REPLACE_EXPERT_CONTAINER",
       "enabled": true,
       "prepare": {
         "python": "python3",
-        "required_modules": ["vllm", "torch_npu"],
-        "host_checks": [["npu-smi", "info"]],
-        "environment_scripts": ["/usr/local/Ascend/ascend-toolkit/set_env.sh"],
         "helper_path": "/workspace/moqe/manage_backend.py",
         "command_timeout_seconds": 120
       }
@@ -57,54 +81,122 @@
   ],
   "replicas": [
     {
-      "id": "awq-0", "expert": "awq", "node_id": "awq-node", "enabled": true,
-      "device_ids": [0], "base_url": "http://REPLACE_AWQ_NODE:19000/v1",
-      "backend_port": 19000, "model": "moqe-qwen3-awq",
+      "id": "awq-0",
+      "expert": "awq",
+      "node_id": "awq-node",
+      "enabled": true,
+      "device_ids": [
+        0
+      ],
+      "base_url": "http://REPLACE_AWQ_NODE:19000/v1",
+      "backend_port": 19000,
+      "model": "moqe-qwen3-awq",
       "model_path": "/workspace/models/Qwen3-14B-AWQ",
       "launch": {
         "command_timeout_seconds": 60,
-        "env": {"ASCEND_RT_VISIBLE_DEVICES": "{device_ids}"},
+        "env": {},
         "vllm_args": {
-          "quantization": "awq", "dtype": "float16", "tensor_parallel_size": 1,
-          "max_model_len": 8192, "max_num_seqs": 8,
-          "max_num_batched_tokens": 2048, "gpu_memory_utilization": 0.5,
+          "quantization": "awq",
+          "dtype": "float16",
+          "tensor_parallel_size": 1,
+          "max_model_len": 8192,
+          "max_num_seqs": 8,
+          "max_num_batched_tokens": 2048,
+          "gpu_memory_utilization": 0.5,
           "enforce_eager": true
         },
         "start_command": [
-          "python3", "{backend_helper}", "start",
-          "--pid-file", "/workspace/run/{id}.json", "--log-file", "/workspace/logs/{id}.log",
-          "--", "python3", "-m", "vllm.entrypoints.openai.api_server",
-          "--model", "{model_path}", "--served-model-name", "{model}",
-          "--host", "0.0.0.0", "--port", "{port}", "{vllm_args}"
+          "python3",
+          "{backend_helper}",
+          "start",
+          "--pid-file",
+          "/workspace/run/{id}.json",
+          "--log-file",
+          "/workspace/logs/{id}.log",
+          "--",
+          "python3",
+          "-m",
+          "{backend_module}",
+          "--model",
+          "{model_path}",
+          "--served-model-name",
+          "{model}",
+          "--host",
+          "0.0.0.0",
+          "--port",
+          "{port}",
+          "{vllm_args}"
         ],
-        "stop_command": ["python3", "{backend_helper}", "stop",
-                         "--pid-file", "/workspace/run/{id}.json", "--stop-timeout", "60"]
-      }
+        "stop_command": [
+          "python3",
+          "{backend_helper}",
+          "stop",
+          "--pid-file",
+          "/workspace/run/{id}.json",
+          "--stop-timeout",
+          "60"
+        ]
+      },
+      "runtime_profile": "ascend_vllm"
     },
     {
-      "id": "gptq-0", "expert": "gptq", "node_id": "gptq-node", "enabled": true,
-      "device_ids": [0], "base_url": "http://REPLACE_GPTQ_NODE:19000/v1",
-      "backend_port": 19000, "model": "moqe-qwen3-gptq",
+      "id": "gptq-0",
+      "expert": "gptq",
+      "node_id": "gptq-node",
+      "enabled": true,
+      "device_ids": [
+        0
+      ],
+      "base_url": "http://REPLACE_GPTQ_NODE:19000/v1",
+      "backend_port": 19000,
+      "model": "moqe-qwen3-gptq",
       "model_path": "/workspace/models/Qwen3-14B-GPTQ",
       "launch": {
         "command_timeout_seconds": 60,
-        "env": {"ASCEND_RT_VISIBLE_DEVICES": "{device_ids}"},
+        "env": {},
         "vllm_args": {
-          "quantization": "gptq", "dtype": "float16", "tensor_parallel_size": 1,
-          "max_model_len": 8192, "max_num_seqs": 8,
-          "max_num_batched_tokens": 2048, "gpu_memory_utilization": 0.5,
+          "quantization": "gptq",
+          "dtype": "float16",
+          "tensor_parallel_size": 1,
+          "max_model_len": 8192,
+          "max_num_seqs": 8,
+          "max_num_batched_tokens": 2048,
+          "gpu_memory_utilization": 0.5,
           "enforce_eager": true
         },
         "start_command": [
-          "python3", "{backend_helper}", "start",
-          "--pid-file", "/workspace/run/{id}.json", "--log-file", "/workspace/logs/{id}.log",
-          "--", "python3", "-m", "vllm.entrypoints.openai.api_server",
-          "--model", "{model_path}", "--served-model-name", "{model}",
-          "--host", "0.0.0.0", "--port", "{port}", "{vllm_args}"
+          "python3",
+          "{backend_helper}",
+          "start",
+          "--pid-file",
+          "/workspace/run/{id}.json",
+          "--log-file",
+          "/workspace/logs/{id}.log",
+          "--",
+          "python3",
+          "-m",
+          "{backend_module}",
+          "--model",
+          "{model_path}",
+          "--served-model-name",
+          "{model}",
+          "--host",
+          "0.0.0.0",
+          "--port",
+          "{port}",
+          "{vllm_args}"
         ],
-        "stop_command": ["python3", "{backend_helper}", "stop",
-                         "--pid-file", "/workspace/run/{id}.json", "--stop-timeout", "60"]
-      }
+        "stop_command": [
+          "python3",
+          "{backend_helper}",
+          "stop",
+          "--pid-file",
+          "/workspace/run/{id}.json",
+          "--stop-timeout",
+          "60"
+        ]
+      },
+      "runtime_profile": "ascend_vllm"
     }
   ]
 }

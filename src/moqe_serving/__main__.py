@@ -11,12 +11,12 @@ from .deployment.prepare import NodePreparer
 
 
 async def prepare_only(settings):
-    preparer = NodePreparer(settings.lifecycle_log_dir)
     reports = {}
+    preparer = NodePreparer(settings.lifecycle_log_dir, reports)
     for node in settings.nodes:
         replicas = [r for r in settings.active_replicas if r.node_id == node.id]
-        if node.enabled and node.prepare and replicas:
-            reports[node.id] = await preparer.prepare(node, replicas)
+        groups = settings.preparation_groups(node, replicas) if node.enabled else []
+        await preparer.prepare_groups(groups)
     print(json.dumps({"nodes": reports}, ensure_ascii=False, indent=2))
     return all(report["passed"] for report in reports.values())
 

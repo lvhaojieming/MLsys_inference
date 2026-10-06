@@ -19,6 +19,10 @@ python3 -m moqe_serving --config configs/local.json --prepare-only
 
 ## 配置
 
+昇腾运行环境和适配器建议通过 runtime_profiles 共享，副本填写 runtime_profile。
+见 [runtime_profiles.md](runtime_profiles.md)。不使用 profile 的节点仍可按下例直接填写 prepare；
+引用 profile 的受管理副本即使未写 node.prepare，也会执行自动依赖检查和 helper 部署。
+
 完整的 V7 + 两个受管理专家的首次部署模板为 configs/first_deployment.example.json。
 复制为 configs/local.json，并替换节点、容器、Router 路径、权重路径和设备编号。
 其中 awq/gptq 是通用量化参数；当前集群 Ascend INT4 必须按已验证的适配器配置
@@ -103,6 +107,7 @@ prepare 结果不会代替模型验收。通信检查包含控制链路，后续
 
 GET /admin/config 的 nodes[].preparation 包含 in_progress、current_check、passed、
 checks、failed_check/error 和耗时，属于准备检查报告，不是新增的实例状态。
+使用 profile 时各组的检查报告位于 nodes[].preparation.profiles，节点顶层显示汇总结果。
 只有实例的 STARTING、READY、DRAINING、UNHEALTHY、OFFLINE 参与状态机。
 
 准备日志保存在 lifecycle_log_dir/node-<节点ID的十六进制编码>-<检查名>.log。

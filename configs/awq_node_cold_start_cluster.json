@@ -1,4 +1,23 @@
 {
+  "runtime_profiles": {
+    "ascend_moqe_int4": {
+      "accelerator": "ascend",
+      "backend": "vllm",
+      "adapter": "moqe_ascend_int4",
+      "environment_scripts": [
+        "/usr/local/Ascend/ascend-toolkit/set_env.sh",
+        "/usr/local/Ascend/nnal/atb/set_env.sh"
+      ],
+      "env": {
+        "VLLM_USE_V1": "1",
+        "VLLM_NO_USAGE_STATS": "1",
+        "VLLM_VERSION": "0.8.4",
+        "OMP_NUM_THREADS": "4",
+        "PYTHONPATH": "/workspace/zhangjinhao/runtime:/workspace/zhangjinhao/moqe-runtime/adapter:/workspace/zhangjinhao/moqe-runtime/python-deps:/workspace/vllm:/workspace/vllm-ascend",
+        "MOQE_ASCEND_INT4_ADAPTER": "1"
+      }
+    }
+  },
   "gateway": {
     "host": "127.0.0.1",
     "port": 18082,
@@ -46,11 +65,10 @@
       "container": "moqe-cold-node-test",
       "prepare": {
         "python": "python3",
-        "required_modules": ["vllm", "torch_npu"],
-        "host_checks": [["npu-smi", "info"]],
-        "required_paths": ["/workspace/zhangjinhao/moqe-runtime/adapter", "/workspace/zhangjinhao/runtime"],
-        "env": {"ASCEND_RT_VISIBLE_DEVICES": "3"},
-        "environment_scripts": ["/usr/local/Ascend/ascend-toolkit/set_env.sh", "/usr/local/Ascend/nnal/atb/set_env.sh"],
+        "required_paths": [
+          "/workspace/zhangjinhao/moqe-runtime/adapter",
+          "/workspace/zhangjinhao/runtime"
+        ],
         "helper_path": "/workspace/zhangjinhao/moqe-managed/manage_backend.py",
         "command_timeout_seconds": 120
       },
@@ -70,7 +88,8 @@
       "backend_port": 19000,
       "model": "moqe-qwen3-awq",
       "model_path": "/workspace/zhangjinhao/model/Qwen3-14B-AWQ-Ascend-INT4",
-      "launch": null
+      "launch": null,
+      "runtime_profile": "ascend_moqe_int4"
     },
     {
       "id": "awq-212-cold-card3",
@@ -94,18 +113,9 @@
           "--stop-timeout",
           "60"
         ],
-        "env": {
-          "VLLM_USE_V1": "1",
-          "VLLM_NO_USAGE_STATS": "1",
-          "ASCEND_RT_VISIBLE_DEVICES": "{device_ids}",
-          "VLLM_VERSION": "0.8.4",
-          "OMP_NUM_THREADS": "4",
-          "PYTHONPATH": "/workspace/zhangjinhao/runtime:/workspace/zhangjinhao/moqe-runtime/adapter:/workspace/zhangjinhao/moqe-runtime/python-deps:/workspace/vllm:/workspace/vllm-ascend",
-          "MOQE_ASCEND_INT4_ADAPTER": "1"
-        },
+        "env": {},
         "command_timeout_seconds": 60,
         "vllm_args": {
-          "quantization": "moqe_ascend_int4",
           "tensor_parallel_size": 1,
           "dtype": "float16",
           "max_model_len": 12288,
@@ -119,14 +129,29 @@
           "disable_log_requests": true
         },
         "start_command": [
-          "python3", "{backend_helper}", "start",
-          "--pid-file", "/workspace/zhangjinhao/run/{id}.json",
-          "--log-file", "/workspace/zhangjinhao/logs/{id}.log",
-          "--", "python3", "-m", "vllm.entrypoints.openai.api_server",
-          "--model", "{model_path}", "--served-model-name", "{model}",
-          "--host", "0.0.0.0", "--port", "{port}", "{vllm_args}"
+          "python3",
+          "{backend_helper}",
+          "start",
+          "--pid-file",
+          "/workspace/zhangjinhao/run/{id}.json",
+          "--log-file",
+          "/workspace/zhangjinhao/logs/{id}.log",
+          "--",
+          "python3",
+          "-m",
+          "{backend_module}",
+          "--model",
+          "{model_path}",
+          "--served-model-name",
+          "{model}",
+          "--host",
+          "0.0.0.0",
+          "--port",
+          "{port}",
+          "{vllm_args}"
         ]
-      }
+      },
+      "runtime_profile": "ascend_moqe_int4"
     }
   ]
 }

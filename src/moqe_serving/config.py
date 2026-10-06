@@ -1,10 +1,10 @@
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from urllib.parse import urlparse
 
 from .vllm_options import validate_vllm_command
-from .deployment.config import NodePreparation
+from .deployment.config import NodePreparation, RuntimeProfile
 
 
 @dataclass(frozen=True)
@@ -72,6 +72,7 @@ class Replica:
     model_path: str | None = None
     backend_port: int | None = None
     launch: Launch | None = None
+    runtime_profile: str | None = None
 
 
 @dataclass(frozen=True)
@@ -118,6 +119,7 @@ class Settings:
     lifecycle_log_dir: str = "logs/lifecycle"
     default_max_tokens: int = 128
     default_enable_thinking: bool = False
+    runtime_profiles: dict[str, RuntimeProfile] = field(default_factory=dict)
 
     def __post_init__(self):
         if self.replicas and not self.admission_enabled:
@@ -141,6 +143,14 @@ class Settings:
             raise ValueError("Invalid admission generation or polling parameters")
         if self.default_max_tokens <= 0:
             raise ValueError("default_max_tokens must be positive")
+        if any(not isinstance(name, str) or not name.strip() or not isinstance(profile, RuntimeProfile)
+               for name, profile in self.runtime_profiles.items()):
+            raise ValueError("runtime_profiles must map nonempty names to runtime profiles")
+        for replica in self.replicas:
+            if replica.runtime_profile is not None and replica.runtime_profile not in self.runtime_profiles:
+                raise ValueError(f"Unknown runtime profile for {replica.id}: {replica.runtime_profile}")
+            if replica.runtime_profile and replica.launch and not replica.node_id:
+                raise ValueError("Managed runtime profiles require node_id")
         assigned_devices = set()
         assigned_endpoints = set()
         for replica in self.replicas:
@@ -175,9 +185,12 @@ class Settings:
             if replica.backend_port is not None and urlparse(replica.base_url).port != replica.backend_port:
                 raise ValueError("backend_port must match base_url port")
             if replica.launch:
+                replica = self.effective_replica(replica)
                 node = next((n for n in self.nodes if n.id == replica.node_id), None)
-                if any("{backend_helper}" in part for part in (*replica.launch.start_command, *replica.launch.stop_command)) and not (node and node.prepare):
-                    raise ValueError("backend_helper requires node.prepare")
+                if any("{backend_helper}" in part for part in (*replica.launch.start_command, *replica.launch.stop_command)) and not (node and (node.prepare or replica.runtime_profile)):
+                    raise ValueError("backend_helper requires node.prepare or runtime_profile")
+                if any("{backend_module}" in part for part in replica.launch.start_command) and not replica.runtime_profile:
+                    raise ValueError("backend_module requires runtime_profile")
                 if not replica.launch.start_command or not replica.launch.stop_command:
                     raise ValueError("Managed replica requires both start_command and stop_command")
                 if replica.launch.command_timeout_seconds <= 0:
@@ -201,6 +214,8 @@ class Settings:
     @classmethod
     def load(cls, path: str):
         value = json.loads(Path(path).read_text(encoding="utf-8"))
+        value["runtime_profiles"] = {name: RuntimeProfile.from_dict(profile)
+                                     for name, profile in value.get("runtime_profiles", {}).items()}
         replicas = []
         for item in value.get("replicas", []):
             item = dict(item)
@@ -233,3 +248,26 @@ class Settings:
     def active_replicas(self):
         disabled_nodes = {node.id for node in self.nodes if not node.enabled}
         return tuple(r for r in self.replicas if r.enabled and r.node_id not in disabled_nodes)
+
+    def effective_replica(self, replica):
+        profile = self.runtime_profiles.get(replica.runtime_profile)
+        if not profile or not replica.launch:
+            return replica
+        node = next((n for n in self.nodes if n.id == replica.node_id), None)
+        node_env = node.prepare.env if node and node.prepare else {}
+        return replace(replica, launch=replace(replica.launch,
+            env={**profile.env, **node_env, **replica.launch.env, profile.visibility_variable: "{device_ids}"},
+            vllm_args={**profile.backend_arguments, **replica.launch.vllm_args}))
+
+    def preparation_groups(self, node, replicas):
+        """Prepare each hardware/adapter environment independently on a node."""
+        groups = []
+        for name in dict.fromkeys(r.runtime_profile for r in replicas):
+            members = tuple(r for r in replicas if r.runtime_profile == name)
+            profile = self.runtime_profiles.get(name)
+            options = node.prepare
+            if profile and (options or any(r.launch for r in members)):
+                options = profile.preparation(options, members)
+            if options:
+                groups.append((name, replace(node, prepare=options), members))
+        return groups

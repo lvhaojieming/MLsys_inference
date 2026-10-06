@@ -111,7 +111,7 @@ def create_app(settings: Settings, transport=None, router_runtime=None, config_p
             # Reuse configuration validation for dynamically supplied endpoints.
             if replica.launch:
                 raise ValueError("Managed replicas must be configured in the source file")
-            Settings(replicas=(replica,), nodes=settings.nodes)
+            Settings(replicas=(replica,), nodes=settings.nodes, runtime_profiles=settings.runtime_profiles)
         except (ValueError, TypeError):
             raise HTTPException(400, "Invalid replica configuration")
         if replica.expert not in registry.experts:

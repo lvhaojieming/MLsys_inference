@@ -33,12 +33,17 @@ class ConfigController:
             self.expert_models.setdefault(replica.expert, set()).add(replica.model)
 
     async def command(self, replica, action, settings):
+        replica = settings.effective_replica(replica)
         node = next((n for n in settings.nodes if n.id == replica.node_id), None)
+        profile = settings.runtime_profiles.get(replica.runtime_profile)
+        if node and profile:
+            node = replace(node, prepare=profile.preparation(node.prepare, (replica,)))
         values = {"id": replica.id, "expert": replica.expert, "model": replica.model,
                   "model_path": replica.model_path or "", "port": str(replica.backend_port or ""),
                   "device_ids": ",".join(map(str, replica.device_ids)),
                   "host": node.host if node else "", "container": (node.container or "") if node else "",
-                  "backend_helper": node.prepare.helper_path if node and node.prepare else ""}
+                  "backend_helper": node.prepare.helper_path if node and node.prepare else "",
+                  "backend_module": profile.backend_module if profile else ""}
         def expand(value):
             for key, replacement in values.items():
                 value = value.replace("{" + key + "}", replacement)
@@ -76,18 +81,21 @@ class ConfigController:
     async def reconcile(self, desired):
         async with self.lock:
             # Validate the entire edit before draining or launching anything.
-            if replace(desired, replicas=self.baseline.replicas, nodes=self.baseline.nodes) != self.baseline:
-                raise ValueError("Only nodes and replicas can be hot-edited; other settings require restart")
+            if replace(desired, replicas=self.baseline.replicas, nodes=self.baseline.nodes,
+                       runtime_profiles=self.baseline.runtime_profiles) != self.baseline:
+                raise ValueError("Only nodes, replicas and runtime_profiles can be hot-edited; other settings require restart")
             for r in desired.replicas:
                 if r.expert not in self.expert_models or r.model not in self.expert_models[r.expert]:
                     raise ValueError("Hot edits may only add replicas of existing experts and model names")
-            active = {r.id: r for r in desired.active_replicas}
+            active = {r.id: desired.effective_replica(r) for r in desired.active_replicas}
             removing = []
             for replica_id, current in list(self.applied.items()):
                 target = active.get(replica_id)
                 old_node = next((n for n in self.settings.nodes if n.id == current.node_id), None)
                 new_node = next((n for n in desired.nodes if n.id == current.node_id), None)
-                if target != current or old_node != new_node:
+                old_profile = self.settings.runtime_profiles.get(current.runtime_profile)
+                new_profile = desired.runtime_profiles.get(current.runtime_profile)
+                if target != current or old_node != new_node or old_profile != new_profile:
                     removing.append(current)
             # Withdraw every replica on a disabled node immediately, before
             # waiting for any one replica's long-running request to finish.
@@ -107,13 +115,13 @@ class ConfigController:
             preparer = NodePreparer(desired.lifecycle_log_dir, self.preparation)
             for node in desired.nodes:
                 members = [r for r in pending.values() if r.node_id == node.id]
-                if node.prepare and members:
-                    prepared[node.id] = await preparer.prepare(node, members)
-                    self.preparation[node.id] = prepared[node.id]
-                    logger.info("node_preparation id=%s result=%s", node.id, prepared[node.id])
+                groups = desired.preparation_groups(node, members)
+                prepared.update(await preparer.prepare_groups(groups))
+                if groups:
+                    logger.info("node_preparation id=%s result=%s", node.id, self.preparation[node.id])
             for replica_id, replica in pending.items():
                 try:
-                    result = prepared.get(replica.node_id)
+                    result = prepared.get(replica_id)
                     if result and not result["passed"]:
                         raise RuntimeError(f"Node preparation failed at {result['failed_check']}: {result['error']}")
                     if replica.launch:
@@ -128,7 +136,7 @@ class ConfigController:
                 except Exception as exc:
                     self.registry.transition(replica_id, "unhealthy", "configured launch failed")
                     self.registry.validation[replica_id] = {"passed": False, "error": str(exc)}
-                    if prepared.get(replica.node_id, {}).get("passed") is False:
+                    if prepared.get(replica_id, {}).get("passed") is False:
                         self.registry.validation[replica_id]["node_preparation_failed"] = True
                     self.applied[replica_id] = replica
                     logger.exception("Replica %s launch failed", replica_id)
@@ -165,5 +173,7 @@ class ConfigController:
                                   if self.registry.get(r["id"]).node_id == n.id)}
                  for n in self.settings.nodes]
         return {"config_path": self.path, "last_error": self.last_error,
+                "runtime_profiles": {name: {"accelerator": p.accelerator, "backend": p.backend,
+                                             "adapter": p.adapter} for name, p in self.settings.runtime_profiles.items()},
                 "managed_replicas": sorted(self.owned), "nodes": nodes, "instances": instances,
                 "transitions": self.registry.transitions}

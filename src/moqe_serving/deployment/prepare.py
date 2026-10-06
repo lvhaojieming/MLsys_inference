@@ -53,10 +53,33 @@ class NodePreparer:
         self.log_dir = Path(log_dir)
         self.reports = reports if reports is not None else {}
 
-    async def prepare(self, node, replicas):
+    async def prepare_groups(self, groups):
+        """Share report aggregation between startup, hot edits and the CLI."""
+        prepared = {}
+        if not groups:
+            return prepared
+        node_id = groups[0][1].id
+        if any(name for name, _, _ in groups):
+            report = {"passed": False, "in_progress": True, "profiles": {}}
+            self.reports[node_id] = report
+            preparer = NodePreparer(self.log_dir, report["profiles"])
+            for name, node, members in groups:
+                result = await preparer.prepare(node, members, report_key=name or "legacy")
+                report["profiles"][name or "legacy"] = result
+                prepared.update((r.id, result) for r in members)
+            report["passed"] = all(r["passed"] for r in report["profiles"].values())
+            report["in_progress"] = False
+        else:
+            for _, node, members in groups:
+                result = await self.prepare(node, members)
+                self.reports[node_id] = result
+                prepared.update((r.id, result) for r in members)
+        return prepared
+
+    async def prepare(self, node, replicas, *, report_key=None):
         options = node.prepare
         report = {"passed": False, "in_progress": True, "started_at_unix": time.time(), "checks": []}
-        self.reports[node.id] = report
+        self.reports[report_key or node.id] = report
         started = time.monotonic()
         phase = "communication"
         async def check(name, command, *, host=False):
@@ -64,7 +87,8 @@ class NodePreparer:
             phase = name
             report["current_check"] = name
             logger.info("node_preparation_check node=%s check=%s", node.id, name)
-            log_path = self.log_dir / f"node-{node.id.encode().hex()}-{name}.log"
+            suffix = "-profile-" + report_key.encode().hex() if report_key else ""
+            log_path = self.log_dir / f"node-{node.id.encode().hex()}{suffix}-{name}.log"
             await run_node_command(node, command, log_path=log_path,
                 timeout=options.command_timeout_seconds, env={} if host else options.env,
                 in_container=not host, environment_scripts=() if host else options.environment_scripts)

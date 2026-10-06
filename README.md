@@ -22,6 +22,8 @@ vLLM 上下文、并发、内存比例、量化和缓存参数可直接填写 `r
 启用配置监听后修改参数，会排空并重启该受管理实例，重新验收后入池。
 已有统一环境但尚无模型进程时，配置 `nodes[].prepare` 自动检查通信、依赖、模型目录并部署进程 helper。
 首次部署与热加入使用同一流程，步骤和配置见 [node_deployment.md](docs/node_deployment.md)。
+昇腾卡池的公共环境和适配器使用 `runtime_profiles` 定义，副本通过 `runtime_profile`
+引用；配置优先级和热修改行为见 [runtime_profiles.md](docs/runtime_profiles.md)。
 流式响应开始后发生故障会中断，不会重新生成或拼接另一个专家的回答。
 
 ## 启动
