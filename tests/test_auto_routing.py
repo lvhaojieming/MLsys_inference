@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from moqe_serving.config import Replica, Settings
 from moqe_serving.gateway.app import create_app
 from moqe_serving.routing.runtime import RoutingDecision
+from admission_support import with_admission
 
 
 class FakeRouter:
@@ -35,7 +36,7 @@ def test_auto_selects_expert_once_and_forwards_canonical_template(stream):
         return httpx.Response(200, json={"model": "gptq-model", "choices": []})
     settings = Settings(tuple(Replica(k, k, f"http://{k}/v1", f"{k}-model") for k in ["awq", "gptq"]))
     runtime = FakeRouter()
-    app = create_app(settings, httpx.MockTransport(backend), runtime)
+    app = create_app(settings, httpx.MockTransport(with_admission(backend, ['awq-model', 'gptq-model'])), runtime)
     with TestClient(app) as client:
         response = client.post("/v1/chat/completions", json={"model": "auto", "stream": stream,
                                 "messages": [{"role": "user", "content": "hello"}]})
@@ -56,7 +57,7 @@ def test_auto_rejects_overlength_before_backend_call():
     def backend(request):
         pytest.fail("Invalid prompt must never reach backend")
     settings = Settings((Replica("r", "gptq", "http://gptq/v1", "m"),))
-    app = create_app(settings, httpx.MockTransport(backend), FakeRouter())
+    app = create_app(settings, httpx.MockTransport(with_admission(backend, ['m'])), FakeRouter())
     with TestClient(app) as client:
         response = client.post("/v1/chat/completions", json={"model": "auto",
                                 "messages": [{"role": "user", "content": "too long"}]})

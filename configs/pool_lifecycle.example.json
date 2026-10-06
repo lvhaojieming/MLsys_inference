@@ -1,0 +1,61 @@
+{
+  "gateway": {"host": "127.0.0.1", "port": 18081, "log_level": "info"},
+  "watch_config": true,
+  "config_poll_interval_seconds": 2,
+  "drain_timeout_seconds": 300,
+  "lifecycle_log_dir": "logs/lifecycle",
+  "admission_enabled": true,
+  "admission_timeout_seconds": 600,
+  "health": {"enabled": true, "interval_seconds": 2, "probe_timeout_seconds": 2, "failure_threshold": 3, "recovery_threshold": 2},
+  "admission": {
+    "prompt": "What is 17 + 25? Reply with the number only.",
+    "expected": "42",
+    "max_tokens": 32,
+    "temperature": 0,
+    "enable_thinking": false,
+    "poll_interval_seconds": 1
+  },
+  "timeout_seconds": 120,
+  "max_connections": 256,
+  "default_max_tokens": 128,
+  "default_enable_thinking": false,
+  "admin_token_env": "MOQE_ADMIN_TOKEN",
+  "router": null,
+  "nodes": [
+    {"id": "existing-node", "host": "10.107.206.209", "ssh_target": null, "container": null},
+    {"id": "new-node", "host": "REPLACE_NODE_IP", "ssh_target": "root@REPLACE_NODE_IP", "container": "REPLACE_CONTAINER"}
+  ],
+  "replicas": [
+    {
+      "id": "awq-existing-0", "expert": "awq", "enabled": true,
+      "node_id": "existing-node", "device_ids": [0],
+      "base_url": "http://10.107.206.209:19000/v1", "backend_port": 19000,
+      "model": "moqe-qwen3-awq", "model_path": "REPLACE_EXISTING_MODEL_PATH",
+      "launch": null
+    },
+    {
+      "id": "awq-new-0", "expert": "awq", "enabled": false,
+      "node_id": "new-node", "device_ids": [3],
+      "base_url": "http://REPLACE_NODE_IP:19103/v1", "backend_port": 19103,
+      "model": "moqe-qwen3-awq", "model_path": "/workspace/models/REPLACE_AWQ_CHECKPOINT",
+      "launch": {
+        "command_timeout_seconds": 60,
+        "env": {"ASCEND_RT_VISIBLE_DEVICES": "{device_ids}"},
+        "start_command": [
+          "python3", "/workspace/MLsys_inference/scripts/manage_backend.py", "start",
+          "--pid-file", "/workspace/run/{id}.json", "--log-file", "/workspace/logs/{id}.log",
+          "--", "python3", "-m", "vllm.entrypoints.openai.api_server",
+          "--model", "{model_path}", "--served-model-name", "{model}",
+          "--quantization", "awq", "--host", "0.0.0.0", "--port", "{port}",
+          "--tensor-parallel-size", "1", "--dtype", "float16",
+          "--max-model-len", "8192", "--max-num-seqs", "8",
+          "--gpu-memory-utilization", "0.8", "--enforce-eager"
+        ],
+        "stop_command": [
+          "python3", "/workspace/MLsys_inference/scripts/manage_backend.py", "stop",
+          "--pid-file", "/workspace/run/{id}.json", "--stop-timeout", "30"
+        ]
+      }
+    }
+  ]
+}

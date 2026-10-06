@@ -1,0 +1,86 @@
+# 配置驱动的同专家扩缩容
+
+启动时只传配置文件，其余部署参数由配置读取：
+
+```bash
+python -m moqe_serving --config configs/awq_pool_cluster.json
+```
+
+`awq_pool_cluster.json` 的 .213 节点、容器、模型路径和两个服务端口已根据运行进程核对。
+它用一个 AWQ 专家池验证副本扩缩容，未配置 Router，也未部署到现有 Gateway。
+两个后端目前均为其他实验常驻服务，因此 `launch: null`：只接入和退出调度，绝不停止这些后端。
+修改第二个副本的 `enabled` 为 true，就将它加入目标副本列表。
+
+## 文件中的参数
+
+| 配置字段 | 含义 |
+|---|---|
+| `gateway` | 监听地址、端口、日志级别 |
+| `nodes` | 节点 ID、地址、SSH 目标、ssh_options（端口、身份文件等）、容器名称 |
+| `replicas` | 目标副本列表；一个条目对应一个服务实例，可占多张卡 |
+| `enabled` | true 加入目标列表；false 退出；也可删除该条目 |
+| `node_id` / `device_ids` | 副本所在节点与物理设备编号 |
+| `model_path` / `model` | 后端文件系统内的模型路径、对外模型名称 |
+| `base_url` / `backend_port` | Gateway 可达的服务地址与监听端口 |
+| `launch.start_command` / `stop_command` | 配置管理的后端启动和停止命令，均为参数数组 |
+| `launch.env` | 后端启动环境，例如可见设备、PYTHONPATH、CANN 库路径 |
+| `admission` | 验收题目、标准答案、生成参数与就绪轮询间隔 |
+| `admission_timeout_seconds` | 后端就绪与完整验收的总时间预算 |
+| `health` | 周期探测间隔、单次超时、连续失败与恢复阈值 |
+| `drain_timeout_seconds` | 移除前等待已有请求结束的时间预算 |
+| `config_poll_interval_seconds` | 检测配置变更的间隔 |
+| `timeout_seconds` / `max_connections` | Gateway 后端 HTTP 客户端参数 |
+| `default_max_tokens` / `default_enable_thinking` | 自动路由请求缺省生成设置 |
+| `router` | checkpoint、tokenizer、模型代码路径、设备、专家映射 |
+| `lifecycle_log_dir` | 启停命令的本地输出目录 |
+| `admin_token_env` | 管理凭据的环境变量名；凭据本身通过环境提供 |
+
+同一节点的 enabled 副本不得重复占用设备，服务 endpoint 不得重复，backend_port 必须与 URL 一致。
+这些校验只覆盖当前配置，不能判断配置以外的训练或服务占用了哪些卡。
+
+## 保存配置后的行为
+
+```text
+增加条目 / enabled=true
+  → 可选：执行 start_command，启动独立后端
+  → 等待模型就绪 → 实际生成预热 → 非流式与流式正确性测试
+  → 通过后 READY，加入相同专家的副本调度
+
+删除条目 / enabled=false
+  → DRAINING，立刻停止分配新请求
+  → 已有请求全部结束
+  → 若是本控制器管理的后端，执行 stop_command；否则只退出调度
+  → OFFLINE
+```
+
+新增验收失败时副本为 UNHEALTHY，原有 READY 副本继续服务。
+修改现有副本的节点、设备、模型路径或启动参数，会先 drain 旧实例，再启动并验收替代实例。
+仅对带 launch 的副本自动控制后端进程；launch=null 的节点、设备、模型路径属于部署信息，
+实际后端的迁移、模型替换仍需外部执行，然后将新 endpoint 配入文件。
+如果已有请求超过 drain 时间预算，保持停止分配新请求，不强杀后端；配置状态会记录错误。
+问题修复后可调用 `POST /admin/config/reload` 重试（需管理令牌），或再次修改并保存配置。
+仅验收失败的副本可先设 false，等待 OFFLINE，再设 true 重试。
+
+建议编辑临时文件后原子替换配置。非法 JSON、重复设备、全新专家等配置错误在操作前被拒绝。
+节点和副本支持热修改；Gateway 端口、Router checkpoint、验收设置等全局参数在重启时读取，
+修改这些字段后必须重启，当前版本会明确拒绝将其作为热更新执行。
+开启配置管理后，单副本注册、drain 和 validate API 禁用，配置文件是副本目标状态的唯一来源。
+
+## 冷启动由配置管理
+
+参考 `pool_lifecycle.example.json` 的第二个副本。该副本默认 disabled，路径和节点占位值需要修改。
+配置中 `start_command` 通过 Linux helper 启动后台服务并返回；不要填持续阻塞的前台服务命令。
+helper 后面的 vLLM 所有参数仍在配置数组里，包括量化类型、上下文、并发、内存比例等。
+`stop_command` 仅停止 PID 文件中记录且进程身份匹配的进程组。
+
+命令支持 `{id}`、`{expert}`、`{model}`、`{model_path}`、`{port}`、`{device_ids}`、`{host}`、`{container}` 替换。
+Node 配有 ssh_target 时先通过 SSH 执行；配置 container 时在对应容器中执行。
+Gateway 所在主机必须有 SSH/docker 客户端及目标访问权限；helper 文件必须先放到目标容器配置路径。
+Ascend 驱动/CANN 及量化适配器的必要环境通过 launch.env 或已有启动脚本提供。
+示例的通用 vLLM 参数不能直接替代当前集群的 moqe_ascend_int4 适配启动参数。
+
+Gateway 退出会停止监听配置，但不会停止常驻后端，避免重启 Gateway 影响推理进程。
+重启时带 launch 的副本通过对应 PID 文件认领，helper 会检查已运行进程与命令一致。
+一律使用单 Gateway worker；当前没有跨进程一致性控制、全新专家热添加。
+状态机及阈值健康摘除/恢复见 [instance_state_machine.md](instance_state_machine.md)。
+功能冒烟验收不替代任务质量评估、权重哈希验证、并发容量与长上下文测试。

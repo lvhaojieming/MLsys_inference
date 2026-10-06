@@ -6,7 +6,7 @@
 ## 当前实现
 
 - FastAPI Gateway，`/health`、`/v1/models`、`/v1/chat/completions`。
-- 静态专家池，按在途请求数选择副本。
+- 专家池按在途请求数选择 READY 副本，可开启模型验收后入池，并在运行中为相同专家增加副本。
 - 标准 JSON 与 SSE 流式代理，后端模型名称映射。
 - 后端失败返回 502，释放副本计数；请求携带 trace / expert / replica 响应头。
 - 配置校验；后端凭据通过 `api_key_env` 引用环境变量。
@@ -14,7 +14,10 @@
 请求的 `model` 可显式指定 `awq` 或 `gptq`；配置 router 后，`model=auto` 自动选专家。
 Ascend router 使用完整 prompt、冻结 embedding 和训练好的 checkpoint，每条请求只选一次专家。
 `/health` 只表示 Gateway 存活。副本计数属于单个 Gateway 进程。
-尚未实现自动健康摘除、动态卡池、重试、跨专家容错、容量策略和完整指标。
+已支持阈值健康摘除、重新验收恢复和开发文档的五状态约束。
+尚未实现全新专家池热加入、重试、跨专家容错、容量策略和完整指标。
+同专家动态扩容、验收入池和 drain 的配置见 [pool_admission.md](docs/pool_admission.md)。
+配置文件驱动的启动、节点与模型路径、同专家扩缩容见 [config_lifecycle.md](docs/config_lifecycle.md)。
 流式响应开始后发生故障会中断，不会重新生成或拼接另一个专家的回答。
 
 ## 启动

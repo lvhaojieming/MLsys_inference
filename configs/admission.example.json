@@ -1,0 +1,9 @@
+{
+  "admission_enabled": true,
+  "admin_token_env": "MOQE_ADMIN_TOKEN",
+  "admission_timeout_seconds": 300,
+  "timeout_seconds": 120,
+  "replicas": [
+    {"id": "awq-card0", "expert": "awq", "base_url": "http://127.0.0.1:19000/v1", "model": "moqe-qwen3-awq"}
+  ]
+}

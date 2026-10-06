@@ -2,6 +2,8 @@ import logging
 import asyncio
 import json
 import uuid
+import os
+import secrets
 from contextlib import asynccontextmanager
 
 import httpx
@@ -10,14 +12,21 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..backends.openai import build_request
-from ..config import Settings
+from ..config import Replica, Settings
 from ..pool.registry import Registry
+from ..pool.admission import validate_replica
+from ..pool.controller import ConfigController
+from ..pool.health import HealthManager
 
 logger = logging.getLogger(__name__)
 
 
-def create_app(settings: Settings, transport=None, router_runtime=None):
-    registry = Registry(settings.replicas)
+def create_app(settings: Settings, transport=None, router_runtime=None, config_path=None):
+    controlled = settings.watch_config or any(r.launch for r in settings.replicas)
+    if settings.watch_config and not config_path:
+        raise ValueError("Config watching requires a configuration file path")
+    registry = Registry(() if controlled else tuple(r for r in settings.replicas if r.enabled),
+                        require_admission=settings.admission_enabled)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -32,10 +41,126 @@ def create_app(settings: Settings, transport=None, router_runtime=None):
             transport=transport,
         ) as client:
             app.state.client = client
-            yield
+            app.state.controller = ConfigController(settings, registry, client, config_path)
+            watcher = None
+            health_task = None
+            if controlled:
+                await app.state.controller.reconcile(settings)
+                if settings.watch_config:
+                    watcher = asyncio.create_task(app.state.controller.watch())
+            elif settings.admission_enabled:
+                await asyncio.gather(*(validate_replica(registry, r, client, settings.admission_timeout_seconds, settings.admission)
+                                       for r in registry.replicas))
+            app.state.health_manager = HealthManager(settings, registry, client)
+            if settings.health.enabled:
+                health_task = asyncio.create_task(app.state.health_manager.run())
+            try:
+                yield
+            finally:
+                for task in (watcher, health_task):
+                    if not task:
+                        continue
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
 
     app = FastAPI(title="MoQE Inference Gateway", lifespan=lifespan)
     app.state.registry = registry
+
+    def require_admin(request):
+        token = os.environ.get(settings.admin_token_env, "") if settings.admin_token_env else ""
+        if not token:
+            raise HTTPException(404, "Management API is disabled")
+        if not secrets.compare_digest(request.headers.get("Authorization", ""), "Bearer " + token):
+            raise HTTPException(401, "Invalid management token")
+
+    @app.get("/admin/instances")
+    async def instances(request: Request):
+        require_admin(request)
+        return {"instances": registry.snapshot()}
+
+    @app.get("/admin/config")
+    async def config_status(request: Request):
+        require_admin(request)
+        return app.state.controller.snapshot()
+
+    @app.post("/admin/config/reload")
+    async def reload_config(request: Request):
+        require_admin(request)
+        if not settings.watch_config:
+            raise HTTPException(409, "Enable watch_config to reconcile the configuration")
+        try:
+            await app.state.controller.reload()
+        except (ValueError, TypeError, OSError) as exc:
+            app.state.controller.last_error = str(exc)
+            raise HTTPException(400, str(exc)) from exc
+        except (RuntimeError, TimeoutError) as exc:
+            app.state.controller.last_error = str(exc)
+            raise HTTPException(409, str(exc)) from exc
+        return app.state.controller.snapshot()
+
+    @app.post("/admin/instances")
+    async def register(request: Request):
+        require_admin(request)
+        if controlled:
+            raise HTTPException(409, "Edit replicas in the source configuration instead")
+        try:
+            replica = Replica(**await request.json())
+            # Reuse configuration validation for dynamically supplied endpoints.
+            if replica.launch:
+                raise ValueError("Managed replicas must be configured in the source file")
+            Settings(replicas=(replica,), nodes=settings.nodes)
+        except (ValueError, TypeError):
+            raise HTTPException(400, "Invalid replica configuration")
+        if replica.expert not in registry.experts:
+            raise HTTPException(400, "Only replicas of an existing expert pool may be added")
+        if replica.model not in {r.model for r in registry.replicas if r.expert == replica.expert}:
+            raise HTTPException(400, "New replica must use the existing expert's served model name")
+        try:
+            registry.add(replica)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        result = await validate_replica(registry, replica, app.state.client, settings.admission_timeout_seconds, settings.admission)
+        auto_eligible = bool(settings.router and replica.expert in settings.router.expert_mapping.values())
+        return JSONResponse({"id": replica.id, "state": registry.states[replica.id],
+                             "auto_routing_eligible": auto_eligible, "validation": result},
+                            status_code=201 if registry.states[replica.id] == "ready" else 422)
+
+    @app.post("/admin/instances/{replica_id}/validate")
+    async def revalidate(replica_id: str, request: Request):
+        require_admin(request)
+        if controlled:
+            raise HTTPException(409, "Disable and re-enable the replica in the source configuration")
+        try:
+            replica = registry.get(replica_id)
+        except StopIteration:
+            raise HTTPException(404, "Unknown replica")
+        try:
+            result = await validate_replica(registry, replica, app.state.client, settings.admission_timeout_seconds, settings.admission)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return JSONResponse({"state": registry.states[replica_id], "validation": result},
+                            status_code=200 if registry.states[replica_id] == "ready" else 422)
+
+    @app.post("/admin/instances/{replica_id}/drain")
+    async def drain(replica_id: str, request: Request):
+        require_admin(request)
+        if controlled:
+            raise HTTPException(409, "Disable or remove the replica in the source configuration")
+        try:
+            registry.drain(replica_id)
+        except KeyError:
+            raise HTTPException(404, "Unknown replica")
+        return {"id": replica_id, "state": registry.states[replica_id]}
+
+    @app.get("/ready")
+    async def ready():
+        experts = sorted({r.expert for r in registry.replicas if registry.states[r.id] == "ready"})
+        required = set(settings.router.expert_mapping.values()) if settings.router else set(registry.experts)
+        passed = bool(experts) and required <= set(experts)
+        return JSONResponse({"ready": passed, "ready_experts": experts}, status_code=200 if passed else 503)
 
     @app.get("/health")
     async def health():
@@ -83,10 +208,10 @@ def create_app(settings: Settings, transport=None, router_runtime=None):
                                          "truncate_prompt_tokens", "add_special_tokens",
                                          "chat_template_content_format")):
                 raise HTTPException(400, "Automatic routing uses the canonical chat template")
-            generation = payload.get("max_tokens", 128)
+            generation = payload.get("max_tokens", settings.default_max_tokens)
             if "max_completion_tokens" in payload or isinstance(generation, bool) or not isinstance(generation, int) or generation <= 0:
                 raise HTTPException(400, "Use a positive integer max_tokens for automatic routing")
-            kwargs = payload.get("chat_template_kwargs", {"enable_thinking": False})
+            kwargs = payload.get("chat_template_kwargs", {"enable_thinking": settings.default_enable_thinking})
             if not isinstance(kwargs, dict) or set(kwargs) - {"enable_thinking"} or not isinstance(kwargs.get("enable_thinking", False), bool):
                 raise HTTPException(400, "Only boolean enable_thinking is supported in template kwargs")
             kwargs = {"enable_thinking": kwargs.get("enable_thinking", False)}
@@ -101,7 +226,10 @@ def create_app(settings: Settings, transport=None, router_runtime=None):
             payload = {**payload, "max_tokens": generation, "chat_template": runtime.chat_template,
                        "chat_template_kwargs": kwargs}
 
-        replica = registry.acquire(expert)
+        try:
+            replica = registry.acquire(expert)
+        except KeyError:
+            raise HTTPException(503, "Expert pool has no admitted ready replica")
         trace_id = uuid.uuid4().hex
         upstream = None
         try:

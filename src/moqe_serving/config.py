@@ -1,7 +1,51 @@
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
+
+
+@dataclass(frozen=True)
+class Node:
+    id: str
+    host: str
+    ssh_target: str | None = None
+    container: str | None = None
+    ssh_options: tuple[str, ...] = ("-o", "BatchMode=yes")
+
+
+@dataclass(frozen=True)
+class Launch:
+    # Commands must start a detached service and return. Stop commands stop only that service.
+    start_command: tuple[str, ...] = ()
+    stop_command: tuple[str, ...] = ()
+    env: dict[str, str] = field(default_factory=dict)
+    command_timeout_seconds: float = 60.0
+
+
+@dataclass(frozen=True)
+class Admission:
+    prompt: str = "What is 17 + 25? Reply with the number only."
+    expected: str = "42"
+    max_tokens: int = 32
+    temperature: float = 0.0
+    enable_thinking: bool = False
+    poll_interval_seconds: float = 0.5
+
+
+@dataclass(frozen=True)
+class Gateway:
+    host: str = "127.0.0.1"
+    port: int = 8000
+    log_level: str = "info"
+
+
+@dataclass(frozen=True)
+class Health:
+    enabled: bool = True
+    interval_seconds: float = 2.0
+    probe_timeout_seconds: float = 2.0
+    failure_threshold: int = 3
+    recovery_threshold: int = 2
 
 
 @dataclass(frozen=True)
@@ -11,6 +55,12 @@ class Replica:
     base_url: str
     model: str
     api_key_env: str | None = None
+    enabled: bool = True
+    node_id: str | None = None
+    device_ids: tuple[int, ...] = ()
+    model_path: str | None = None
+    backend_port: int | None = None
+    launch: Launch | None = None
 
 
 @dataclass(frozen=True)
@@ -28,14 +78,77 @@ class Settings:
     timeout_seconds: float = 120.0
     max_connections: int = 256
     router: RouterSettings | None = None
+    admission_enabled: bool = True
+    admin_token_env: str | None = None
+    admission_timeout_seconds: float = 300.0
+    nodes: tuple[Node, ...] = ()
+    admission: Admission = field(default_factory=Admission)
+    gateway: Gateway = field(default_factory=Gateway)
+    health: Health = field(default_factory=Health)
+    watch_config: bool = False
+    config_poll_interval_seconds: float = 2.0
+    drain_timeout_seconds: float = 300.0
+    lifecycle_log_dir: str = "logs/lifecycle"
+    default_max_tokens: int = 128
+    default_enable_thinking: bool = False
 
     def __post_init__(self):
+        if self.replicas and not self.admission_enabled:
+            raise ValueError("Configured instances must pass admission before becoming READY")
         if self.timeout_seconds <= 0 or self.max_connections <= 0:
             raise ValueError("timeout_seconds and max_connections must be positive")
+        if self.admission_timeout_seconds <= 0:
+            raise ValueError("admission_timeout_seconds must be positive")
+        if self.config_poll_interval_seconds <= 0 or self.drain_timeout_seconds <= 0:
+            raise ValueError("Config polling and drain timeouts must be positive")
+        if self.watch_config and not self.admission_enabled:
+            raise ValueError("Config watching requires admission_enabled")
+        if not 1 <= self.gateway.port <= 65535:
+            raise ValueError("Invalid gateway port")
+        if self.gateway.log_level not in {"debug", "info", "warning", "error", "critical"}:
+            raise ValueError("Invalid gateway log_level")
+        if min(self.health.interval_seconds, self.health.probe_timeout_seconds,
+               self.health.failure_threshold, self.health.recovery_threshold) <= 0:
+            raise ValueError("Health intervals and thresholds must be positive")
+        if self.admission.max_tokens <= 0 or self.admission.poll_interval_seconds <= 0:
+            raise ValueError("Invalid admission generation or polling parameters")
+        if self.default_max_tokens <= 0:
+            raise ValueError("default_max_tokens must be positive")
+        assigned_devices = set()
+        assigned_endpoints = set()
+        for replica in self.replicas:
+            if not replica.enabled:
+                continue
+            if replica.base_url.rstrip('/') in assigned_endpoints:
+                raise ValueError("Enabled replicas must have distinct endpoints")
+            assigned_endpoints.add(replica.base_url.rstrip('/'))
+            for device in replica.device_ids:
+                assignment = (replica.node_id, device)
+                if replica.node_id and assignment in assigned_devices:
+                    raise ValueError("A node/device may only belong to one enabled replica")
+                assigned_devices.add(assignment)
+        node_ids = [n.id for n in self.nodes]
+        if len(node_ids) != len(set(node_ids)):
+            raise ValueError("Node ids must be unique")
         ids = [r.id for r in self.replicas]
         if len(ids) != len(set(ids)):
             raise ValueError("Replica ids must be unique")
         for replica in self.replicas:
+            if replica.node_id and replica.node_id not in node_ids:
+                raise ValueError(f"Unknown node for {replica.id}")
+            if any(isinstance(d, bool) or not isinstance(d, int) or d < 0 for d in replica.device_ids):
+                raise ValueError("device_ids must be nonnegative integers")
+            if replica.backend_port is not None and not 1 <= replica.backend_port <= 65535:
+                raise ValueError("Invalid backend port")
+            if replica.backend_port is not None and urlparse(replica.base_url).port != replica.backend_port:
+                raise ValueError("backend_port must match base_url port")
+            if replica.launch:
+                if not replica.launch.start_command or not replica.launch.stop_command:
+                    raise ValueError("Managed replica requires both start_command and stop_command")
+                if replica.launch.command_timeout_seconds <= 0:
+                    raise ValueError("Command timeout must be positive")
+                if not replica.model_path or not replica.device_ids:
+                    raise ValueError("Managed replica requires model_path and device_ids")
             if replica.expert == "auto":
                 raise ValueError("auto is reserved for learned routing")
             url = urlparse(replica.base_url)
@@ -53,7 +166,22 @@ class Settings:
     @classmethod
     def load(cls, path: str):
         value = json.loads(Path(path).read_text(encoding="utf-8"))
-        value["replicas"] = tuple(Replica(**r) for r in value.get("replicas", []))
+        replicas = []
+        for item in value.get("replicas", []):
+            item = dict(item)
+            item["device_ids"] = tuple(item.get("device_ids", []))
+            if item.get("launch") is not None:
+                launch = dict(item["launch"])
+                for key in ("start_command", "stop_command"):
+                    launch[key] = tuple(launch.get(key, []))
+                item["launch"] = Launch(**launch)
+            replicas.append(Replica(**item))
+        value["replicas"] = tuple(replicas)
+        value["nodes"] = tuple(Node(**{**n, "ssh_options": tuple(n.get("ssh_options", ("-o", "BatchMode=yes")))})
+                               for n in value.get("nodes", []))
+        for key, kind in (("admission", Admission), ("gateway", Gateway), ("health", Health)):
+            if key in value:
+                value[key] = kind(**value[key])
         if value.get("router") is not None:
             value["router"] = RouterSettings(**value["router"])
         return cls(**value)

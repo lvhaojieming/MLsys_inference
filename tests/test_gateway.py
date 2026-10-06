@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from moqe_serving.config import Replica, Settings
 from moqe_serving.gateway.app import create_app
 from moqe_serving.pool.registry import Registry
+from admission_support import with_admission
 
 
 def test_health_does_not_claim_backend_readiness():
@@ -17,6 +18,8 @@ def test_health_does_not_claim_backend_readiness():
 def test_replica_leases_and_balancing():
     replicas = tuple(Replica(str(i), "awq", "http://localhost/v1", "backend") for i in range(2))
     registry = Registry(replicas)
+    for replica in replicas:
+        registry.transition(replica.id, 'ready', 'test admission passed')
     first, second = registry.acquire("awq"), registry.acquire("awq")
     assert first != second
     registry.release(first)
@@ -34,7 +37,7 @@ def test_proxy_and_release(stream):
             return httpx.Response(200, content=b'data: {"choices": []}\n\ndata: [DONE]\n\n')
         return httpx.Response(200, json={"model": "backend-model", "choices": []})
     settings = Settings((Replica("r1", "awq", "http://backend/v1", "backend-model"),))
-    app = create_app(settings, httpx.MockTransport(backend))
+    app = create_app(settings, httpx.MockTransport(with_admission(backend, ['backend-model'])))
     with TestClient(app) as client:
         response = client.post("/v1/chat/completions", json={
             "model": "awq", "messages": [{"role": "user", "content": "hello"}], "stream": stream,
@@ -57,7 +60,7 @@ def test_backend_errors_release_lease(failure):
             return httpx.Response(503)
         return httpx.Response(200, content=b"not json")
     settings = Settings((Replica("r1", "awq", "http://backend/v1", "backend-model"),))
-    app = create_app(settings, httpx.MockTransport(backend))
+    app = create_app(settings, httpx.MockTransport(with_admission(backend, ['backend-model'])))
     with TestClient(app) as client:
         response = client.post("/v1/chat/completions", json={
             "model": "awq", "messages": [{"role": "user", "content": "hello"}],
