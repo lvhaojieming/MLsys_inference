@@ -20,6 +20,8 @@ Ascend router 使用完整 prompt、冻结 embedding 和训练好的 checkpoint�
 配置文件驱动的启动、节点与模型路径、同专家扩缩容见 [config_lifecycle.md](docs/config_lifecycle.md)。
 vLLM 上下文、并发、内存比例、量化和缓存参数可直接填写 `replicas[].launch.vllm_args`；
 启用配置监听后修改参数，会排空并重启该受管理实例，重新验收后入池。
+已有统一环境但尚无模型进程时，配置 `nodes[].prepare` 自动检查通信、依赖、模型目录并部署进程 helper。
+首次部署与热加入使用同一流程，步骤和配置见 [node_deployment.md](docs/node_deployment.md)。
 流式响应开始后发生故障会中断，不会重新生成或拼接另一个专家的回答。
 
 ## 启动
@@ -84,15 +86,12 @@ python -m pytest -q
 | 目录 | 用途 |
 | --- | --- |
 | `src/moqe_serving/gateway` | HTTP 入口、请求生命周期 |
-| `src/moqe_serving/routing` | Router 推理契约，后续接入 checkpoint |
-| `src/moqe_serving/pool` | 专家池、副本调度，后续动态成员与健康管理 |
+| `src/moqe_serving/routing` | 在线 Router、checkpoint 加载和 Embedding 图执行 |
+| `src/moqe_serving/pool` | 专家池、配置控制、验收、状态机与健康管理 |
 | `src/moqe_serving/backends` | vLLM / Ascend 服务接口 |
-| `src/moqe_serving/observability` | 后续指标与完整 trace |
-| `src/moqe_serving/offline`、`placement` | 后续离线分析与部署规划 |
-| `benchmarks` | 质量、性能、扩缩容和故障实验 |
-| `configs/experiments` | 实验配置 |
+| `src/moqe_serving/deployment` | 节点预检、helper 部署和统一命令执行 |
+| `scripts` | 集群验收与性能实验入口，见 scripts/README.md |
+| `configs` | 部署与实验配置模板 |
 | `tests`、`docs`、`results` | 测试、技术报告、生成结果 |
 
-四周计划：第 1 周端到端接入及 router；第 2 周两级路由和动态卡池；
-第 3 周容错与监控；第 4 周系统实验及结果整理。
 技术报告是设计参考，实际功能以代码和测试为准。

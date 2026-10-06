@@ -7,7 +7,7 @@ from moqe_serving.config import Replica, Settings
 from moqe_serving.pool.admission import validate_replica
 from moqe_serving.pool.models import InstanceState
 from moqe_serving.pool.registry import Registry
-from test_admission import backend
+from admission_support import backend
 
 
 def replica():

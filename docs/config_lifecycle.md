@@ -84,9 +84,10 @@ python -m moqe_serving --config configs/awq_pool_cluster.json
 helper 后面的 vLLM 参数可以使用下面的结构化对象，包括量化类型、上下文、并发、内存比例等。
 `stop_command` 仅停止 PID 文件中记录且进程身份匹配的进程组。
 
-命令支持 `{id}`、`{expert}`、`{model}`、`{model_path}`、`{port}`、`{device_ids}`、`{host}`、`{container}` 替换。
+命令支持 `{id}`、`{expert}`、`{model}`、`{model_path}`、`{port}`、`{device_ids}`、`{host}`、`{container}`、`{backend_helper}` 替换。
 Node 配有 ssh_target 时先通过 SSH 执行；配置 container 时在对应容器中执行。
-Gateway 所在主机必须有 SSH/docker 客户端及目标访问权限；helper 文件必须先放到目标容器配置路径。
+Gateway 所在主机必须有 SSH/docker 客户端及目标访问权限；配置 `nodes[].prepare` 时自动部署独立 helper，
+否则需要提前部署 `src/moqe_serving/deployment/backend_process.py` 到目标环境的 helper 路径。
 Ascend 驱动/CANN 及量化适配器的必要环境通过 launch.env 或已有启动脚本提供。
 示例的通用 vLLM 参数不能直接替代当前集群的 moqe_ascend_int4 适配启动参数。
 
@@ -140,7 +141,7 @@ vLLM 官方参数说明见 https://docs.vllm.ai/en/v0.10.1/cli/serve.html 。
 数组元素；如果需要 Ascend 环境初始化，可放在 `bash -lc` 命令字符串中，
 系统会先将结构化参数转换为 shell 引号保护的参数列表。不要给占位符再包引号。
 `configs/pool_lifecycle.example.json` 展示数组形式，
-`configs/awq_node_cold_start_cluster.json` 展示当前 Ascend shell 形式。
+`configs/awq_node_cold_start_cluster.json` 展示当前 Ascend 参数与共享环境脚本，避免在长 shell 命令里重复参数。
 同一参数不能同时出现在对象和原启动命令里；配置校验会拒绝重复。
 `model`、`served_model_name`、`host`、`port` 保留在副本字段和原启动命令中，
 不能在对象里重复设置。旧配置不含 `vllm_args` 时行为保持不变。

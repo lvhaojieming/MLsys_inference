@@ -6,7 +6,7 @@ import httpx
 from moqe_serving.config import Node, Replica, Settings
 from moqe_serving.pool.controller import ConfigController
 from moqe_serving.pool.registry import Registry
-from test_admission import backend
+from admission_support import backend
 
 
 def test_disabled_node_drains_all_replicas_before_waiting():

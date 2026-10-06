@@ -44,6 +44,16 @@
       "host": "10.107.206.212",
       "ssh_target": "root@10.107.206.212",
       "container": "moqe-cold-node-test",
+      "prepare": {
+        "python": "python3",
+        "required_modules": ["vllm", "torch_npu"],
+        "host_checks": [["npu-smi", "info"]],
+        "required_paths": ["/workspace/zhangjinhao/moqe-runtime/adapter", "/workspace/zhangjinhao/runtime"],
+        "env": {"ASCEND_RT_VISIBLE_DEVICES": "3"},
+        "environment_scripts": ["/usr/local/Ascend/ascend-toolkit/set_env.sh", "/usr/local/Ascend/nnal/atb/set_env.sh"],
+        "helper_path": "/workspace/zhangjinhao/moqe-managed/manage_backend.py",
+        "command_timeout_seconds": 120
+      },
       "enabled": false
     }
   ],
@@ -77,7 +87,7 @@
       "launch": {
         "stop_command": [
           "python3",
-          "/workspace/zhangjinhao/runtime/manage_backend.py",
+          "{backend_helper}",
           "stop",
           "--pid-file",
           "/workspace/zhangjinhao/run/{id}.json",
@@ -90,6 +100,7 @@
           "ASCEND_RT_VISIBLE_DEVICES": "{device_ids}",
           "VLLM_VERSION": "0.8.4",
           "OMP_NUM_THREADS": "4",
+          "PYTHONPATH": "/workspace/zhangjinhao/runtime:/workspace/zhangjinhao/moqe-runtime/adapter:/workspace/zhangjinhao/moqe-runtime/python-deps:/workspace/vllm:/workspace/vllm-ascend",
           "MOQE_ASCEND_INT4_ADAPTER": "1"
         },
         "command_timeout_seconds": 60,
@@ -108,9 +119,12 @@
           "disable_log_requests": true
         },
         "start_command": [
-          "bash",
-          "-lc",
-          "source /usr/local/Ascend/ascend-toolkit/set_env.sh; source /usr/local/Ascend/nnal/atb/set_env.sh; export PYTHONPATH=/workspace/zhangjinhao/runtime:/workspace/zhangjinhao/moqe-runtime/adapter:/workspace/zhangjinhao/moqe-runtime/python-deps:/workspace/vllm:/workspace/vllm-ascend:$PYTHONPATH; exec python3 /workspace/zhangjinhao/runtime/manage_backend.py start --pid-file /workspace/zhangjinhao/run/{id}.json --log-file /workspace/zhangjinhao/logs/{id}.log -- python3 -m vllm.entrypoints.openai.api_server --model {model_path} --served-model-name {model} --host 0.0.0.0 --port {port} {vllm_args}"
+          "python3", "{backend_helper}", "start",
+          "--pid-file", "/workspace/zhangjinhao/run/{id}.json",
+          "--log-file", "/workspace/zhangjinhao/logs/{id}.log",
+          "--", "python3", "-m", "vllm.entrypoints.openai.api_server",
+          "--model", "{model_path}", "--served-model-name", "{model}",
+          "--host", "0.0.0.0", "--port", "{port}", "{vllm_args}"
         ]
       }
     }

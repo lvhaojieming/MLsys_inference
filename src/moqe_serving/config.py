@@ -4,6 +4,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .vllm_options import validate_vllm_command
+from .deployment.config import NodePreparation
 
 
 @dataclass(frozen=True)
@@ -14,6 +15,7 @@ class Node:
     container: str | None = None
     ssh_options: tuple[str, ...] = ("-o", "BatchMode=yes")
     enabled: bool = True
+    prepare: NodePreparation | None = None
 
 
 @dataclass(frozen=True)
@@ -173,6 +175,9 @@ class Settings:
             if replica.backend_port is not None and urlparse(replica.base_url).port != replica.backend_port:
                 raise ValueError("backend_port must match base_url port")
             if replica.launch:
+                node = next((n for n in self.nodes if n.id == replica.node_id), None)
+                if any("{backend_helper}" in part for part in (*replica.launch.start_command, *replica.launch.stop_command)) and not (node and node.prepare):
+                    raise ValueError("backend_helper requires node.prepare")
                 if not replica.launch.start_command or not replica.launch.stop_command:
                     raise ValueError("Managed replica requires both start_command and stop_command")
                 if replica.launch.command_timeout_seconds <= 0:
@@ -207,8 +212,14 @@ class Settings:
                 item["launch"] = Launch(**launch)
             replicas.append(Replica(**item))
         value["replicas"] = tuple(replicas)
-        value["nodes"] = tuple(Node(**{**n, "ssh_options": tuple(n.get("ssh_options", ("-o", "BatchMode=yes")))})
-                               for n in value.get("nodes", []))
+        nodes = []
+        for item in value.get("nodes", []):
+            item = dict(item)
+            item["ssh_options"] = tuple(item.get("ssh_options", ("-o", "BatchMode=yes")))
+            if item.get("prepare") is not None:
+                item["prepare"] = NodePreparation.from_dict(item["prepare"])
+            nodes.append(Node(**item))
+        value["nodes"] = tuple(nodes)
         for key, kind in (("admission", Admission), ("gateway", Gateway), ("health", Health)):
             if key in value:
                 value[key] = kind(**value[key])

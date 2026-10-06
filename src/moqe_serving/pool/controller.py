@@ -2,13 +2,14 @@
 import asyncio
 from dataclasses import replace
 import logging
-import os
 from pathlib import Path
 import shlex
 import time
 
 from ..config import Settings
 from ..vllm_options import vllm_arguments
+from ..deployment.commands import run_node_command
+from ..deployment.prepare import NodePreparer
 from .admission import validate_replica
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ class ConfigController:
         self.owned = set()
         self.last_error = None
         self.last_signature = None
+        self.preparation = {}
         self.expert_models = {}
         for replica in settings.replicas:
             self.expert_models.setdefault(replica.expert, set()).add(replica.model)
@@ -35,7 +37,8 @@ class ConfigController:
         values = {"id": replica.id, "expert": replica.expert, "model": replica.model,
                   "model_path": replica.model_path or "", "port": str(replica.backend_port or ""),
                   "device_ids": ",".join(map(str, replica.device_ids)),
-                  "host": node.host if node else "", "container": (node.container or "") if node else ""}
+                  "host": node.host if node else "", "container": (node.container or "") if node else "",
+                  "backend_helper": node.prepare.helper_path if node and node.prepare else ""}
         def expand(value):
             for key, replacement in values.items():
                 value = value.replace("{" + key + "}", replacement)
@@ -49,29 +52,14 @@ class ConfigController:
                 # Insert quoted argv only into an explicitly configured shell.
                 # Do this after ordinary expansion so JSON braces remain literal.
                 command.append(expand(part).replace("{vllm_args}", shlex.join(arguments)))
-        env = {key: expand(value) for key, value in replica.launch.env.items()}
-        if node and node.container:
-            command = ["docker", "exec", node.container, "env", *[f"{k}={v}" for k, v in env.items()], *command]
-        elif node and node.ssh_target:
-            command = ["env", *[f"{k}={v}" for k, v in env.items()], *command]
-        if node and node.ssh_target:
-            command = ["ssh", *node.ssh_options, node.ssh_target, shlex.join(command)]
+        node_env = node.prepare.env if node and node.prepare else {}
+        env = {key: expand(value) for key, value in {**node_env, **replica.launch.env}.items()}
         log_dir = Path(settings.lifecycle_log_dir)
-        log_dir.mkdir(parents=True, exist_ok=True)
         # Avoid interpreting replica ids as filesystem paths.
         name = replica.id.encode().hex()
-        with (log_dir / f"{name}-{action}.log").open("ab") as log:
-            process = await asyncio.create_subprocess_exec(*command, stdout=log, stderr=log,
-                                                           env={**os.environ, **env})
-            try:
-                await asyncio.wait_for(process.wait(), replica.launch.command_timeout_seconds)
-            except BaseException:
-                if process.returncode is None:
-                    process.kill()
-                    await process.wait()
-                raise
-            if process.returncode:
-                raise RuntimeError(f"Replica {replica.id}: {action} exited {process.returncode}")
+        await run_node_command(node, command, log_path=log_dir / f"{name}-{action}.log",
+                               timeout=replica.launch.command_timeout_seconds, env=env,
+                               environment_scripts=node.prepare.environment_scripts if node and node.prepare else ())
 
     async def remove(self, replica, settings):
         self.registry.drain(replica.id)
@@ -109,14 +97,25 @@ class ConfigController:
                 await self.remove(current, desired)
             # Use new node definitions only after removing old managed services.
             self.settings = desired
-            for replica_id, replica in active.items():
-                if replica_id in self.applied:
-                    continue
-                if replica_id in self.registry.states:
+            pending = {id_: r for id_, r in active.items() if id_ not in self.applied}
+            for replica in pending.values():
+                if replica.id in self.registry.states:
                     self.registry.replace_offline(replica)
                 else:
                     self.registry.add(replica)
+            prepared = {}
+            preparer = NodePreparer(desired.lifecycle_log_dir, self.preparation)
+            for node in desired.nodes:
+                members = [r for r in pending.values() if r.node_id == node.id]
+                if node.prepare and members:
+                    prepared[node.id] = await preparer.prepare(node, members)
+                    self.preparation[node.id] = prepared[node.id]
+                    logger.info("node_preparation id=%s result=%s", node.id, prepared[node.id])
+            for replica_id, replica in pending.items():
                 try:
+                    result = prepared.get(replica.node_id)
+                    if result and not result["passed"]:
+                        raise RuntimeError(f"Node preparation failed at {result['failed_check']}: {result['error']}")
                     if replica.launch:
                         # If launch partially succeeds, retain ownership for a later stop.
                         self.owned.add(replica_id)
@@ -129,6 +128,8 @@ class ConfigController:
                 except Exception as exc:
                     self.registry.transition(replica_id, "unhealthy", "configured launch failed")
                     self.registry.validation[replica_id] = {"passed": False, "error": str(exc)}
+                    if prepared.get(replica.node_id, {}).get("passed") is False:
+                        self.registry.validation[replica_id]["node_preparation_failed"] = True
                     self.applied[replica_id] = replica
                     logger.exception("Replica %s launch failed", replica_id)
             self.last_error = None
@@ -156,6 +157,7 @@ class ConfigController:
     def snapshot(self):
         instances = self.registry.snapshot()
         nodes = [{"id": n.id, "host": n.host, "enabled": n.enabled,
+                  "preparation": self.preparation.get(n.id),
                   "replicas": [r.id for r in self.settings.replicas if r.node_id == n.id],
                   "ready_replicas": [r["id"] for r in instances
                                      if self.registry.get(r["id"]).node_id == n.id and r["state"] == "ready"],

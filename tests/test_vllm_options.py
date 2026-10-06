@@ -9,7 +9,7 @@ from moqe_serving.config import Launch, Node, Replica, Settings
 from moqe_serving.pool.controller import ConfigController
 from moqe_serving.pool.registry import Registry
 from moqe_serving.vllm_options import vllm_arguments
-from test_admission import backend
+from admission_support import backend
 
 
 def test_scalar_boolean_json_and_list_arguments():

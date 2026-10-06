@@ -31,6 +31,9 @@ class HealthManager:
             return False
 
     async def check(self, replica):
+        # A reachable external endpoint cannot bypass a failed deployment check.
+        if self.registry.validation.get(replica.id, {}).get("node_preparation_failed"):
+            return
         state = self.registry.states.get(replica.id)
         if state not in {InstanceState.READY, InstanceState.UNHEALTHY} or replica.id in self.registry.validating:
             self.counts.pop(replica.id, None)

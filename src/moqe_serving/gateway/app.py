@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def create_app(settings: Settings, transport=None, router_runtime=None, config_path=None):
-    controlled = settings.watch_config or any(r.launch for r in settings.replicas)
+    controlled = settings.watch_config or any(r.launch for r in settings.replicas) or any(n.prepare for n in settings.nodes)
     if settings.watch_config and not config_path:
         raise ValueError("Config watching requires a configuration file path")
     registry = Registry(() if controlled else settings.active_replicas,
