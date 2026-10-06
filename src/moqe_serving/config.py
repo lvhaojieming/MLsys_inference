@@ -71,6 +71,22 @@ class RouterSettings:
     training_code: str
     expert_mapping: dict[str, str]
     device: str = "npu:0"
+    embedding_graph: bool = False
+    graph_buckets: tuple[int, ...] = (64, 128, 256, 512, 1024)
+    graph_threshold_margin: float = 0.01
+    embedding_model: str | None = None
+
+    def __post_init__(self):
+        if type(self.embedding_graph) is not bool:
+            raise ValueError("embedding_graph must be boolean")
+        if not self.graph_buckets or any(type(n) is not int or n < 2 for n in self.graph_buckets):
+            raise ValueError("graph_buckets must contain positive token lengths >= 2")
+        if list(self.graph_buckets) != sorted(set(self.graph_buckets)):
+            raise ValueError("graph_buckets must be strictly increasing")
+        if not 0 <= self.graph_threshold_margin < 0.5:
+            raise ValueError("graph_threshold_margin must be in [0, 0.5)")
+        if self.embedding_model is not None and (not isinstance(self.embedding_model, str) or not self.embedding_model.strip()):
+            raise ValueError("embedding_model must be a nonempty model directory")
 
 
 @dataclass(frozen=True)
@@ -189,6 +205,8 @@ class Settings:
             if key in value:
                 value[key] = kind(**value[key])
         if value.get("router") is not None:
+            if "graph_buckets" in value["router"]:
+                value["router"]["graph_buckets"] = tuple(value["router"]["graph_buckets"])
             value["router"] = RouterSettings(**value["router"])
         return cls(**value)
 

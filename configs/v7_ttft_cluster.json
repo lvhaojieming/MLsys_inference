@@ -1,0 +1,75 @@
+{
+  "gateway": {
+    "host": "127.0.0.1",
+    "port": 18083,
+    "log_level": "info"
+  },
+  "watch_config": false,
+  "config_poll_interval_seconds": 2,
+  "drain_timeout_seconds": 300,
+  "lifecycle_log_dir": "/workspace/zhangjinhao/router-training/v7-ttft/lifecycle",
+  "admission_enabled": true,
+  "admission_timeout_seconds": 600,
+  "health": {
+    "enabled": true,
+    "interval_seconds": 2,
+    "probe_timeout_seconds": 2,
+    "failure_threshold": 3,
+    "recovery_threshold": 2
+  },
+  "admission": {
+    "prompt": "What is 17 + 25? Reply with the number only.",
+    "expected": "42",
+    "max_tokens": 32,
+    "temperature": 0,
+    "enable_thinking": false,
+    "poll_interval_seconds": 1
+  },
+  "timeout_seconds": 120,
+  "max_connections": 256,
+  "default_max_tokens": 128,
+  "default_enable_thinking": false,
+  "admin_token_env": "MOQE_ADMIN_TOKEN",
+  "router": {
+    "embedding_model": "/workspace/zhangjinhao/models/Qwen3-Embedding-0.6B",
+    "training_code": "/workspace/zhangjinhao/MLsys",
+    "tokenizer": "/workspace/zhangjinhao/router-base-embedding",
+    "device": "npu:0",
+    "expert_mapping": {
+      "qwen3-14b/awq-w4a16/v1": "awq",
+      "qwen3-14b/gptq-w4a16/v1": "gptq"
+    },
+    "checkpoint": "/workspace/zhangjinhao/router-training/contextual-multitask-v7/mlp-seed20261005/checkpoint_best.pt"
+  },
+  "nodes": [],
+  "replicas": [
+    {
+      "id": "awq-209-ttft",
+      "expert": "awq",
+      "enabled": true,
+      "node_id": null,
+      "device_ids": [
+        0
+      ],
+      "base_url": "http://10.107.206.209:19000/v1",
+      "backend_port": 19000,
+      "model": "moqe-qwen3-awq",
+      "model_path": "/workspace/zhangjinhao/model/Qwen3-14B-AWQ-Ascend-INT4",
+      "launch": null
+    },
+    {
+      "id": "gptq-210-ttft",
+      "expert": "gptq",
+      "enabled": true,
+      "node_id": null,
+      "device_ids": [
+        0
+      ],
+      "base_url": "http://10.107.206.210:19000/v1",
+      "backend_port": 19000,
+      "model": "moqe-qwen3-gptq",
+      "model_path": null,
+      "launch": null
+    }
+  ]
+}

@@ -38,7 +38,11 @@ moqe-serve --config configs/dev.json --host 127.0.0.1 --port 8000
   "checkpoint": "/path/to/checkpoint_best.pt",
   "tokenizer": "/path/to/router-base-embedding",
   "training_code": "/path/to/MLsys",
+  "embedding_model": "/path/to/Qwen3-Embedding-0.6B",
   "device": "npu:0",
+  "embedding_graph": true,
+  "graph_buckets": [64, 128, 256, 512, 1024],
+  "graph_threshold_margin": 0.01,
   "expert_mapping": {
     "qwen3-14b/awq-w4a16/v1": "awq",
     "qwen3-14b/gptq-w4a16/v1": "gptq"
@@ -47,7 +51,13 @@ moqe-serve --config configs/dev.json --host 127.0.0.1 --port 8000
 ```
 
 `training_code` 提供与 checkpoint 一致的模型结构和 embedding 加载器。
-embedding 路径从 checkpoint 的 `training_config.base_model_path` 读取，必须仍可访问。
+V7 使用冻结的 Qwen3-Embedding-0.6B 和 CPU MLP，输出各专家概率，按 checkpoint 中的验证集阈值选择专家。
+`embedding_model` 可覆盖 checkpoint 记录的 encoder 路径，便于迁移部署；必须使用训练时同一份模型和 tokenizer。
+上述图执行配置适用于 V7。旧架构应移除 `embedding_model` 和三个图参数，
+其 embedding 路径仍从 checkpoint 的 `training_config.base_model_path` 读取。
+图执行默认关闭；开启后启动时完成所有桶的捕获、预热，再进入服务初始化后续步骤。
+超过最大桶长度或接近决策阈值的请求使用原始前向。配置含义、精度验证和性能结果见 [v7_embedding_graph.md](docs/v7_embedding_graph.md)。
+Router 配置变更需要重启 Gateway；节点和副本扩缩容仍按生命周期配置热更新。
 环境需要兼容的 `torch_npu`、CANN、`transformers` 和 `safetensors`。
 `.212` 物理 NPU 1 使用 `ASCEND_RT_VISIBLE_DEVICES=1`，进程内为 `npu:0`。
 只启动一个 Gateway worker。模型启动时加载并预热，路由在工作线程中串行执行。
