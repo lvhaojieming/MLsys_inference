@@ -11,6 +11,15 @@ python -m moqe_serving --config configs/awq_pool_cluster.json
 两个后端目前均为其他实验常驻服务，因此 `launch: null`：只接入和退出调度，绝不停止这些后端。
 修改第二个副本的 `enabled` 为 true，就将它加入目标副本列表。
 
+跨节点实验配置是 `awq_nodes_cluster.json`：使用 .209 和 .213 两个真实节点的相同 AWQ 专家。
+`nodes[].enabled` 是整节点的开关，`replicas[].enabled` 是节点内单个副本的开关；两者都为 true 才入池。
+新增节点时添加 nodes 条目及归属该节点的 replicas 条目，逐个启动和验收；通过的实例才可调度。
+停用节点时，其所有实例先同时停止接收新请求，再等待在途请求结束。
+已排空的各副本按文档状态机转 OFFLINE；重新启用节点后重新验收，才能恢复 READY。
+实例状态机仍只有五种状态，节点属于分组和目标配置，不额外引入一套节点状态枚举。
+同节点多副本和跨节点副本都进入同一专家的调度候选；当前仍采用最少在途请求调度。
+这些配置接入现有常驻服务（launch=null），整节点退出调度不会停止共享后端进程。
+
 ## 文件中的参数
 
 | 配置字段 | 含义 |
@@ -19,6 +28,7 @@ python -m moqe_serving --config configs/awq_pool_cluster.json
 | `nodes` | 节点 ID、地址、SSH 目标、ssh_options（端口、身份文件等）、容器名称 |
 | `replicas` | 目标副本列表；一个条目对应一个服务实例，可占多张卡 |
 | `enabled` | true 加入目标列表；false 退出；也可删除该条目 |
+| `nodes[].enabled` | 一次启用或停用整个节点及其下全部副本 |
 | `node_id` / `device_ids` | 副本所在节点与物理设备编号 |
 | `model_path` / `model` | 后端文件系统内的模型路径、对外模型名称 |
 | `base_url` / `backend_port` | Gateway 可达的服务地址与监听端口 |

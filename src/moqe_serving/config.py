@@ -11,6 +11,7 @@ class Node:
     ssh_target: str | None = None
     container: str | None = None
     ssh_options: tuple[str, ...] = ("-o", "BatchMode=yes")
+    enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -117,7 +118,8 @@ class Settings:
         assigned_devices = set()
         assigned_endpoints = set()
         for replica in self.replicas:
-            if not replica.enabled:
+            node = next((n for n in self.nodes if n.id == replica.node_id), None)
+            if not replica.enabled or (node and not node.enabled):
                 continue
             if replica.base_url.rstrip('/') in assigned_endpoints:
                 raise ValueError("Enabled replicas must have distinct endpoints")
@@ -130,10 +132,14 @@ class Settings:
         node_ids = [n.id for n in self.nodes]
         if len(node_ids) != len(set(node_ids)):
             raise ValueError("Node ids must be unique")
+        if any(not n.id or not n.host or not isinstance(n.enabled, bool) for n in self.nodes):
+            raise ValueError("Nodes require id, host and a boolean enabled flag")
         ids = [r.id for r in self.replicas]
         if len(ids) != len(set(ids)):
             raise ValueError("Replica ids must be unique")
         for replica in self.replicas:
+            if not isinstance(replica.enabled, bool):
+                raise ValueError("Replica enabled must be boolean")
             if replica.node_id and replica.node_id not in node_ids:
                 raise ValueError(f"Unknown node for {replica.id}")
             if any(isinstance(d, bool) or not isinstance(d, int) or d < 0 for d in replica.device_ids):
@@ -185,3 +191,8 @@ class Settings:
         if value.get("router") is not None:
             value["router"] = RouterSettings(**value["router"])
         return cls(**value)
+
+    @property
+    def active_replicas(self):
+        disabled_nodes = {node.id for node in self.nodes if not node.enabled}
+        return tuple(r for r in self.replicas if r.enabled and r.node_id not in disabled_nodes)

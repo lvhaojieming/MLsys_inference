@@ -84,13 +84,20 @@ class ConfigController:
             for r in desired.replicas:
                 if r.expert not in self.expert_models or r.model not in self.expert_models[r.expert]:
                     raise ValueError("Hot edits may only add replicas of existing experts and model names")
-            active = {r.id: r for r in desired.replicas if r.enabled}
+            active = {r.id: r for r in desired.active_replicas}
+            removing = []
             for replica_id, current in list(self.applied.items()):
                 target = active.get(replica_id)
                 old_node = next((n for n in self.settings.nodes if n.id == current.node_id), None)
                 new_node = next((n for n in desired.nodes if n.id == current.node_id), None)
                 if target != current or old_node != new_node:
-                    await self.remove(current, desired)
+                    removing.append(current)
+            # Withdraw every replica on a disabled node immediately, before
+            # waiting for any one replica's long-running request to finish.
+            for current in removing:
+                self.registry.drain(current.id)
+            for current in removing:
+                await self.remove(current, desired)
             # Use new node definitions only after removing old managed services.
             self.settings = desired
             for replica_id, replica in active.items():
@@ -138,6 +145,14 @@ class ConfigController:
                 logger.error("Config edit rejected: %s", exc)
 
     def snapshot(self):
+        instances = self.registry.snapshot()
+        nodes = [{"id": n.id, "host": n.host, "enabled": n.enabled,
+                  "replicas": [r.id for r in self.settings.replicas if r.node_id == n.id],
+                  "ready_replicas": [r["id"] for r in instances
+                                     if self.registry.get(r["id"]).node_id == n.id and r["state"] == "ready"],
+                  "inflight": sum(r["inflight"] for r in instances
+                                  if self.registry.get(r["id"]).node_id == n.id)}
+                 for n in self.settings.nodes]
         return {"config_path": self.path, "last_error": self.last_error,
-                "managed_replicas": sorted(self.owned), "instances": self.registry.snapshot(),
+                "managed_replicas": sorted(self.owned), "nodes": nodes, "instances": instances,
                 "transitions": self.registry.transitions}

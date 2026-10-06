@@ -1,0 +1,80 @@
+{
+  "gateway": {
+    "host": "127.0.0.1",
+    "port": 18081,
+    "log_level": "info"
+  },
+  "watch_config": true,
+  "config_poll_interval_seconds": 2,
+  "drain_timeout_seconds": 300,
+  "lifecycle_log_dir": "logs/lifecycle",
+  "admission_enabled": true,
+  "admission_timeout_seconds": 600,
+  "health": {
+    "enabled": true,
+    "interval_seconds": 2,
+    "probe_timeout_seconds": 2,
+    "failure_threshold": 3,
+    "recovery_threshold": 2
+  },
+  "admission": {
+    "prompt": "What is 17 + 25? Reply with the number only.",
+    "expected": "42",
+    "max_tokens": 32,
+    "temperature": 0,
+    "enable_thinking": false,
+    "poll_interval_seconds": 1
+  },
+  "timeout_seconds": 120,
+  "max_connections": 256,
+  "default_max_tokens": 128,
+  "default_enable_thinking": false,
+  "admin_token_env": "MOQE_ADMIN_TOKEN",
+  "router": null,
+  "nodes": [
+    {
+      "id": "npu-209",
+      "host": "10.107.206.209",
+      "ssh_target": "root@10.107.206.209",
+      "container": "moqe-loss-expert",
+      "enabled": true
+    },
+    {
+      "id": "npu-213",
+      "host": "10.107.206.213",
+      "ssh_target": "root@10.107.206.213",
+      "container": "vllm-ascend",
+      "enabled": false
+    }
+  ],
+  "replicas": [
+    {
+      "id": "awq-209-card0",
+      "expert": "awq",
+      "enabled": true,
+      "node_id": "npu-209",
+      "device_ids": [
+        0
+      ],
+      "base_url": "http://10.107.206.209:19000/v1",
+      "backend_port": 19000,
+      "model": "moqe-qwen3-awq",
+      "model_path": "/workspace/zhangjinhao/model/Qwen3-14B-AWQ-Ascend-INT4",
+      "launch": null
+    },
+    {
+      "id": "awq-213-card0",
+      "expert": "awq",
+      "enabled": true,
+      "node_id": "npu-213",
+      "device_ids": [
+        0
+      ],
+      "base_url": "http://10.107.206.213:19000/v1",
+      "backend_port": 19000,
+      "model": "moqe-qwen3-awq",
+      "model_path": "/workspace/zhangjinhao/model/Qwen3-14B-AWQ-Ascend-INT4",
+      "launch": null
+    }
+  ]
+}
