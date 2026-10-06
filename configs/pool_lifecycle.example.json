@@ -41,15 +41,21 @@
       "launch": {
         "command_timeout_seconds": 60,
         "env": {"ASCEND_RT_VISIBLE_DEVICES": "{device_ids}"},
+        "vllm_args": {
+          "quantization": "awq",
+          "tensor_parallel_size": 1,
+          "dtype": "float16",
+          "max_model_len": 8192,
+          "max_num_seqs": 8,
+          "gpu_memory_utilization": 0.8,
+          "enforce_eager": true
+        },
         "start_command": [
           "python3", "/workspace/MLsys_inference/scripts/manage_backend.py", "start",
           "--pid-file", "/workspace/run/{id}.json", "--log-file", "/workspace/logs/{id}.log",
           "--", "python3", "-m", "vllm.entrypoints.openai.api_server",
           "--model", "{model_path}", "--served-model-name", "{model}",
-          "--quantization", "awq", "--host", "0.0.0.0", "--port", "{port}",
-          "--tensor-parallel-size", "1", "--dtype", "float16",
-          "--max-model-len", "8192", "--max-num-seqs", "8",
-          "--gpu-memory-utilization", "0.8", "--enforce-eager"
+          "--host", "0.0.0.0", "--port", "{port}", "{vllm_args}"
         ],
         "stop_command": [
           "python3", "/workspace/MLsys_inference/scripts/manage_backend.py", "stop",

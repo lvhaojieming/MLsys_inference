@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
+from .vllm_options import validate_vllm_command
+
 
 @dataclass(frozen=True)
 class Node:
@@ -21,6 +23,12 @@ class Launch:
     stop_command: tuple[str, ...] = ()
     env: dict[str, str] = field(default_factory=dict)
     command_timeout_seconds: float = 60.0
+    vllm_args: dict = field(default_factory=dict)
+
+    def __post_init__(self):
+        validate_vllm_command(self.start_command, self.vllm_args)
+        if any("{vllm_args}" in part for part in self.stop_command):
+            raise ValueError("vllm_args may only be used in start_command")
 
 
 @dataclass(frozen=True)

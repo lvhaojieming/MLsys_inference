@@ -8,6 +8,7 @@ import shlex
 import time
 
 from ..config import Settings
+from ..vllm_options import vllm_arguments
 from .admission import validate_replica
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,15 @@ class ConfigController:
             for key, replacement in values.items():
                 value = value.replace("{" + key + "}", replacement)
             return value
-        command = [expand(v) for v in getattr(replica.launch, action + "_command")]
+        arguments = vllm_arguments(replica.launch.vllm_args) if action == "start" else []
+        command = []
+        for part in getattr(replica.launch, action + "_command"):
+            if part == "{vllm_args}":
+                command.extend(arguments)
+            else:
+                # Insert quoted argv only into an explicitly configured shell.
+                # Do this after ordinary expansion so JSON braces remain literal.
+                command.append(expand(part).replace("{vllm_args}", shlex.join(arguments)))
         env = {key: expand(value) for key, value in replica.launch.env.items()}
         if node and node.container:
             command = ["docker", "exec", node.container, "env", *[f"{k}={v}" for k, v in env.items()], *command]

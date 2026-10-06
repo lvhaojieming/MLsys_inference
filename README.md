@@ -18,6 +18,8 @@ Ascend router 使用完整 prompt、冻结 embedding 和训练好的 checkpoint�
 尚未实现全新专家池热加入、重试、跨专家容错、容量策略和完整指标。
 同专家动态扩容、验收入池和 drain 的配置见 [pool_admission.md](docs/pool_admission.md)。
 配置文件驱动的启动、节点与模型路径、同专家扩缩容见 [config_lifecycle.md](docs/config_lifecycle.md)。
+vLLM 上下文、并发、内存比例、量化和缓存参数可直接填写 `replicas[].launch.vllm_args`；
+启用配置监听后修改参数，会排空并重启该受管理实例，重新验收后入池。
 流式响应开始后发生故障会中断，不会重新生成或拼接另一个专家的回答。
 
 ## 启动
