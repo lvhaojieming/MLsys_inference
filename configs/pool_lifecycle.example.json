@@ -1,12 +1,32 @@
 {
-  "gateway": {"host": "127.0.0.1", "port": 18081, "log_level": "info"},
+  "runtime_profiles": {
+    "ascend_vllm": {
+      "accelerator": "ascend",
+      "backend": "vllm",
+      "adapter": "native",
+      "environment_scripts": [
+        "/usr/local/Ascend/ascend-toolkit/set_env.sh"
+      ]
+    }
+  },
+  "gateway": {
+    "host": "127.0.0.1",
+    "port": 18081,
+    "log_level": "info"
+  },
   "watch_config": true,
   "config_poll_interval_seconds": 2,
   "drain_timeout_seconds": 300,
   "lifecycle_log_dir": "logs/lifecycle",
   "admission_enabled": true,
   "admission_timeout_seconds": 600,
-  "health": {"enabled": true, "interval_seconds": 2, "probe_timeout_seconds": 2, "failure_threshold": 3, "recovery_threshold": 2},
+  "health": {
+    "enabled": true,
+    "interval_seconds": 2,
+    "probe_timeout_seconds": 2,
+    "failure_threshold": 3,
+    "recovery_threshold": 2
+  },
   "admission": {
     "prompt": "What is 17 + 25? Reply with the number only.",
     "expected": "42",
@@ -22,40 +42,97 @@
   "admin_token_env": "MOQE_ADMIN_TOKEN",
   "router": null,
   "nodes": [
-    {"id": "existing-node", "host": "10.107.206.209", "ssh_target": null, "container": null},
-    {"id": "new-node", "host": "REPLACE_NODE_IP", "ssh_target": "root@REPLACE_NODE_IP", "container": "REPLACE_CONTAINER"}
+    {
+      "id": "existing-node",
+      "host": "10.107.206.209",
+      "ssh_target": null,
+      "container": null
+    },
+    {
+      "id": "new-node",
+      "host": "REPLACE_NODE_IP",
+      "ssh_target": "root@REPLACE_NODE_IP",
+      "container": "REPLACE_CONTAINER",
+      "prepare": {
+        "python": "python3",
+        "helper_path": "/workspace/moqe/manage_backend.py",
+        "command_timeout_seconds": 120
+      }
+    }
   ],
   "replicas": [
     {
-      "id": "awq-existing-0", "expert": "awq", "enabled": true,
-      "node_id": "existing-node", "device_ids": [0],
-      "base_url": "http://10.107.206.209:19000/v1", "backend_port": 19000,
-      "model": "moqe-qwen3-awq", "model_path": "REPLACE_EXISTING_MODEL_PATH",
-      "launch": null
+      "id": "awq-existing-0",
+      "expert": "awq",
+      "enabled": true,
+      "node_id": "existing-node",
+      "device_ids": [
+        0
+      ],
+      "base_url": "http://10.107.206.209:19000/v1",
+      "backend_port": 19000,
+      "model": "moqe-qwen3-awq",
+      "model_path": "REPLACE_EXISTING_MODEL_PATH",
+      "launch": null,
+      "runtime_profile": "ascend_vllm"
     },
     {
-      "id": "awq-new-0", "expert": "awq", "enabled": false,
-      "node_id": "new-node", "device_ids": [3],
-      "base_url": "http://REPLACE_NODE_IP:19103/v1", "backend_port": 19103,
-      "model": "moqe-qwen3-awq", "model_path": "/workspace/models/REPLACE_AWQ_CHECKPOINT",
+      "id": "awq-new-0",
+      "expert": "awq",
+      "enabled": false,
+      "node_id": "new-node",
+      "device_ids": [
+        3
+      ],
+      "base_url": "http://REPLACE_NODE_IP:19103/v1",
+      "backend_port": 19103,
+      "model": "moqe-qwen3-awq",
+      "model_path": "/workspace/models/REPLACE_AWQ_CHECKPOINT",
       "launch": {
         "command_timeout_seconds": 60,
-        "env": {"ASCEND_RT_VISIBLE_DEVICES": "{device_ids}"},
+        "env": {},
+        "vllm_args": {
+          "quantization": "awq",
+          "tensor_parallel_size": 1,
+          "dtype": "float16",
+          "max_model_len": 8192,
+          "max_num_seqs": 8,
+          "gpu_memory_utilization": 0.8,
+          "enforce_eager": true
+        },
         "start_command": [
-          "python3", "/workspace/MLsys_inference/scripts/manage_backend.py", "start",
-          "--pid-file", "/workspace/run/{id}.json", "--log-file", "/workspace/logs/{id}.log",
-          "--", "python3", "-m", "vllm.entrypoints.openai.api_server",
-          "--model", "{model_path}", "--served-model-name", "{model}",
-          "--quantization", "awq", "--host", "0.0.0.0", "--port", "{port}",
-          "--tensor-parallel-size", "1", "--dtype", "float16",
-          "--max-model-len", "8192", "--max-num-seqs", "8",
-          "--gpu-memory-utilization", "0.8", "--enforce-eager"
+          "python3",
+          "{backend_helper}",
+          "start",
+          "--pid-file",
+          "/workspace/run/{id}.json",
+          "--log-file",
+          "/workspace/logs/{id}.log",
+          "--",
+          "python3",
+          "-m",
+          "{backend_module}",
+          "--model",
+          "{model_path}",
+          "--served-model-name",
+          "{model}",
+          "--host",
+          "0.0.0.0",
+          "--port",
+          "{port}",
+          "{vllm_args}"
         ],
         "stop_command": [
-          "python3", "/workspace/MLsys_inference/scripts/manage_backend.py", "stop",
-          "--pid-file", "/workspace/run/{id}.json", "--stop-timeout", "30"
+          "python3",
+          "{backend_helper}",
+          "stop",
+          "--pid-file",
+          "/workspace/run/{id}.json",
+          "--stop-timeout",
+          "30"
         ]
-      }
+      },
+      "runtime_profile": "ascend_vllm"
     }
   ]
 }

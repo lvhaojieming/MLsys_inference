@@ -11,7 +11,7 @@ from moqe_serving.config import Admission, Launch, Node, Replica, Settings
 from moqe_serving.gateway.app import create_app
 from moqe_serving.pool.controller import ConfigController
 from moqe_serving.pool.registry import Registry
-from test_admission import backend
+from admission_support import backend
 
 
 def test_file_edit_add_disable_and_invalid_edit(tmp_path, monkeypatch):

@@ -1,22 +1,10 @@
-import json
-
 import httpx
 from fastapi.testclient import TestClient
 
 from moqe_serving.config import Replica, Settings
 from moqe_serving.gateway.app import create_app
 from moqe_serving.pool.registry import Registry
-
-
-def backend(request):
-    if request.url.path.endswith('/models'):
-        return httpx.Response(200, json={"data": [{"id": "backend"}]})
-    payload = json.loads(request.content)
-    answer = "0" if request.url.host == "wrong" else "42"
-    if payload.get('stream'):
-        event = {"choices": [{"delta": {"content": answer}}]}
-        return httpx.Response(200, text='data: ' + json.dumps(event) + '\n\ndata: [DONE]\n\n')
-    return httpx.Response(200, json={"choices": [{"message": {"content": answer}}]})
+from admission_support import backend
 
 
 def test_startup_admits_only_correct_backend():

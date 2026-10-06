@@ -6,7 +6,7 @@ from moqe_serving.config import Health, Replica, Settings
 from moqe_serving.pool.admission import validate_replica
 from moqe_serving.pool.health import HealthManager
 from moqe_serving.pool.registry import Registry
-from test_admission import backend
+from admission_support import backend
 
 
 def test_failure_threshold_and_correctness_gated_recovery():

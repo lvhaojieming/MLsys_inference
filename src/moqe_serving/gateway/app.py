@@ -22,10 +22,10 @@ logger = logging.getLogger(__name__)
 
 
 def create_app(settings: Settings, transport=None, router_runtime=None, config_path=None):
-    controlled = settings.watch_config or any(r.launch for r in settings.replicas)
+    controlled = settings.watch_config or any(r.launch for r in settings.replicas) or any(n.prepare for n in settings.nodes)
     if settings.watch_config and not config_path:
         raise ValueError("Config watching requires a configuration file path")
-    registry = Registry(() if controlled else tuple(r for r in settings.replicas if r.enabled),
+    registry = Registry(() if controlled else settings.active_replicas,
                         require_admission=settings.admission_enabled)
 
     @asynccontextmanager
@@ -111,11 +111,13 @@ def create_app(settings: Settings, transport=None, router_runtime=None, config_p
             # Reuse configuration validation for dynamically supplied endpoints.
             if replica.launch:
                 raise ValueError("Managed replicas must be configured in the source file")
-            Settings(replicas=(replica,), nodes=settings.nodes)
+            Settings(replicas=(replica,), nodes=settings.nodes, runtime_profiles=settings.runtime_profiles)
         except (ValueError, TypeError):
             raise HTTPException(400, "Invalid replica configuration")
         if replica.expert not in registry.experts:
             raise HTTPException(400, "Only replicas of an existing expert pool may be added")
+        if any(n.id == replica.node_id and not n.enabled for n in settings.nodes):
+            raise HTTPException(409, "The replica's node is disabled in configuration")
         if replica.model not in {r.model for r in registry.replicas if r.expert == replica.expert}:
             raise HTTPException(400, "New replica must use the existing expert's served model name")
         try:

@@ -80,6 +80,8 @@ class Registry:
 
     def snapshot(self):
         return [{"id": r.id, "expert": r.expert, "model": r.model,
+                 "node_id": r.node_id, "device_ids": r.device_ids,
+                 "runtime_profile": r.runtime_profile,
                  "base_url": r.base_url, "state": self.states[r.id],
                  "inflight": self.inflight[r.id], "validation_in_progress": r.id in self.validating,
                  "validation": self.validation.get(r.id)}

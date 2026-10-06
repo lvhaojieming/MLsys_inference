@@ -18,6 +18,12 @@ Ascend router 使用完整 prompt、冻结 embedding 和训练好的 checkpoint�
 尚未实现全新专家池热加入、重试、跨专家容错、容量策略和完整指标。
 同专家动态扩容、验收入池和 drain 的配置见 [pool_admission.md](docs/pool_admission.md)。
 配置文件驱动的启动、节点与模型路径、同专家扩缩容见 [config_lifecycle.md](docs/config_lifecycle.md)。
+vLLM 上下文、并发、内存比例、量化和缓存参数可直接填写 `replicas[].launch.vllm_args`；
+启用配置监听后修改参数，会排空并重启该受管理实例，重新验收后入池。
+已有统一环境但尚无模型进程时，配置 `nodes[].prepare` 自动检查通信、依赖、模型目录并部署进程 helper。
+首次部署与热加入使用同一流程，步骤和配置见 [node_deployment.md](docs/node_deployment.md)。
+昇腾卡池的公共环境和适配器使用 `runtime_profiles` 定义，副本通过 `runtime_profile`
+引用；配置优先级和热修改行为见 [runtime_profiles.md](docs/runtime_profiles.md)。
 流式响应开始后发生故障会中断，不会重新生成或拼接另一个专家的回答。
 
 ## 启动
@@ -38,7 +44,11 @@ moqe-serve --config configs/dev.json --host 127.0.0.1 --port 8000
   "checkpoint": "/path/to/checkpoint_best.pt",
   "tokenizer": "/path/to/router-base-embedding",
   "training_code": "/path/to/MLsys",
+  "embedding_model": "/path/to/Qwen3-Embedding-0.6B",
   "device": "npu:0",
+  "embedding_graph": true,
+  "graph_buckets": [64, 128, 256, 512, 1024],
+  "graph_threshold_margin": 0.01,
   "expert_mapping": {
     "qwen3-14b/awq-w4a16/v1": "awq",
     "qwen3-14b/gptq-w4a16/v1": "gptq"
@@ -47,7 +57,13 @@ moqe-serve --config configs/dev.json --host 127.0.0.1 --port 8000
 ```
 
 `training_code` 提供与 checkpoint 一致的模型结构和 embedding 加载器。
-embedding 路径从 checkpoint 的 `training_config.base_model_path` 读取，必须仍可访问。
+V7 使用冻结的 Qwen3-Embedding-0.6B 和 CPU MLP，输出各专家概率，按 checkpoint 中的验证集阈值选择专家。
+`embedding_model` 可覆盖 checkpoint 记录的 encoder 路径，便于迁移部署；必须使用训练时同一份模型和 tokenizer。
+上述图执行配置适用于 V7。旧架构应移除 `embedding_model` 和三个图参数，
+其 embedding 路径仍从 checkpoint 的 `training_config.base_model_path` 读取。
+图执行默认关闭；开启后启动时完成所有桶的捕获、预热，再进入服务初始化后续步骤。
+超过最大桶长度或接近决策阈值的请求使用原始前向。配置含义、精度验证和性能结果见 [v7_embedding_graph.md](docs/v7_embedding_graph.md)。
+Router 配置变更需要重启 Gateway；节点和副本扩缩容仍按生命周期配置热更新。
 环境需要兼容的 `torch_npu`、CANN、`transformers` 和 `safetensors`。
 `.212` 物理 NPU 1 使用 `ASCEND_RT_VISIBLE_DEVICES=1`，进程内为 `npu:0`。
 只启动一个 Gateway worker。模型启动时加载并预热，路由在工作线程中串行执行。
@@ -72,15 +88,12 @@ python -m pytest -q
 | 目录 | 用途 |
 | --- | --- |
 | `src/moqe_serving/gateway` | HTTP 入口、请求生命周期 |
-| `src/moqe_serving/routing` | Router 推理契约，后续接入 checkpoint |
-| `src/moqe_serving/pool` | 专家池、副本调度，后续动态成员与健康管理 |
+| `src/moqe_serving/routing` | 在线 Router、checkpoint 加载和 Embedding 图执行 |
+| `src/moqe_serving/pool` | 专家池、配置控制、验收、状态机与健康管理 |
 | `src/moqe_serving/backends` | vLLM / Ascend 服务接口 |
-| `src/moqe_serving/observability` | 后续指标与完整 trace |
-| `src/moqe_serving/offline`、`placement` | 后续离线分析与部署规划 |
-| `benchmarks` | 质量、性能、扩缩容和故障实验 |
-| `configs/experiments` | 实验配置 |
+| `src/moqe_serving/deployment` | 节点预检、helper 部署和统一命令执行 |
+| `scripts` | 集群验收与性能实验入口，见 scripts/README.md |
+| `configs` | 部署与实验配置模板 |
 | `tests`、`docs`、`results` | 测试、技术报告、生成结果 |
 
-四周计划：第 1 周端到端接入及 router；第 2 周两级路由和动态卡池；
-第 3 周容错与监控；第 4 周系统实验及结果整理。
 技术报告是设计参考，实际功能以代码和测试为准。
